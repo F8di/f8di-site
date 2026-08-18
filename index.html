@@ -1,5 +1,4 @@
 <!DOCTYPE html>
-
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -11,534 +10,463 @@
 <link rel="apple-touch-icon" sizes="180x180" href="/assets/favicon-180.png">
 <link rel="icon" type="image/png" sizes="192x192" href="/assets/favicon-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-:root{
---bg:#0C0B08;
---panel:#17140F;
---panel-2:#1E1A13;
---ink:#F5F1E6;
---muted:#9C9384;
---line:#2C2718;
---yellow:#F4C21D;
---yellow-dim:#7A6112;
---yellow-deep:#C89A0A;
+:root {
+  --bg: #0d0e11;
+  --panel: #16181d;
+  --panel-border: #262930;
+  --text-main: #f0f2f5;
+  --text-muted: #8c94a0;
+  --accent: #3b82f6;
+  --accent-hover: #2563eb;
 }
 
-*{box-sizing:border-box;margin:0;padding:0}
-html{scroll-behavior:smooth}
-
-body{
-background:var(--bg);
-color:var(--ink);
-font-family:'Inter',sans-serif;
-line-height:1.55;
--webkit-font-smoothing:antialiased;
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
 }
 
-a{color:inherit;text-decoration:none}
-
-.wrap{
-max-width:880px;
-margin:0 auto;
-padding:0 26px;
+html {
+  scroll-behavior: smooth;
 }
 
-h1,h2,h3{
-font-family:'Space Grotesk',sans-serif;
-letter-spacing:-0.01em;
+body {
+  background: var(--bg);
+  color: var(--text-main);
+  font-family: 'Inter', sans-serif;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
 }
 
-.mono{font-family:'JetBrains Mono',monospace}
-
-.hazard{
-height:10px;
-width:100%;
-background:repeating-linear-gradient(
--45deg,
-var(--yellow) 0px,var(--yellow) 14px,
-#0C0B08 14px,#0C0B08 28px
-);
+a {
+  color: inherit;
+  text-decoration: none;
 }
 
-header{
-position:sticky;
-top:0;
-z-index:10;
-background:rgba(12,11,8,0.9);
-backdrop-filter:blur(8px);
-border-bottom:1px solid var(--line);
+.wrap {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 0 24px;
 }
 
-nav{
-display:flex;
-align-items:center;
-justify-content:space-between;
-padding:18px 0;
+header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: rgba(13, 14, 17, 0.85);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--panel-border);
 }
 
-.logo{
-font-family:'Space Grotesk',sans-serif;
-font-weight:700;
-font-size:17px;
+nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 0;
 }
 
-.logo,.logo span{color:var(--yellow)}
-
-.navlinks{
-display:flex;
-gap:26px;
-font-size:14px;
-color:var(--muted);
+.logo {
+  font-weight: 700;
+  font-size: 18px;
 }
 
-.navlinks a{transition:color .15s ease}
-
-.navlinks a:hover,
-.navlinks a:focus-visible{color:var(--yellow)}
-
-.hero{padding:110px 0 64px}
-
-.eyebrow{
-display:inline-flex;
-align-items:center;
-gap:8px;
-font-family:'JetBrains Mono',monospace;
-font-size:12.5px;
-color:var(--yellow);
-background:rgba(244,194,29,0.1);
-border:1px solid var(--yellow-dim);
-padding:5px 10px;
-border-radius:3px;
-margin-bottom:26px;
+.navlinks {
+  display: flex;
+  gap: 24px;
+  font-size: 14px;
+  color: var(--text-muted);
 }
 
-.dot{
-width:6px;
-height:6px;
-border-radius:50%;
-background:var(--yellow);
-flex-shrink:0;
+.navlinks a:hover {
+  color: var(--text-main);
 }
 
-.hero-mark{
-font-weight:700;
-font-size:clamp(64px,13vw,140px);
-line-height:.9;
-letter-spacing:-.03em;
+.hero {
+  padding: 96px 0 64px;
 }
 
-.hero-mark,.hero-mark span{color:var(--yellow)}
-
-.hero p.sub{
-margin-top:24px;
-font-size:17.5px;
-color:var(--muted);
-max-width:540px;
+.hero-mark {
+  font-weight: 700;
+  font-size: clamp(48px, 10vw, 96px);
+  line-height: 1;
+  letter-spacing: -0.02em;
 }
 
-.hero-links{
-display:flex;
-gap:12px;
-margin-top:32px;
-flex-wrap:wrap;
+.hero p.sub {
+  margin-top: 20px;
+  font-size: 18px;
+  color: var(--text-muted);
+  max-width: 560px;
 }
 
-.pill{
-display:inline-flex;
-align-items:center;
-gap:8px;
-font-family:'JetBrains Mono',monospace;
-font-size:13px;
-color:var(--ink);
-border:1px solid var(--line);
-background:var(--panel);
-padding:9px 14px;
-border-radius:6px;
-transition:border-color .15s ease,color .15s ease;
+.hero-links {
+  display: flex;
+  gap: 12px;
+  margin-top: 32px;
+  flex-wrap: wrap;
 }
 
-.pill:hover,.pill:focus-visible{
-border-color:var(--yellow);
-color:var(--yellow);
+.pill {
+  display: inline-flex;
+  align-items: center;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  color: var(--text-main);
+  border: 1px solid var(--panel-border);
+  background: var(--panel);
+  padding: 8px 14px;
+  border-radius: 6px;
+  transition: border-color 0.15s ease;
 }
 
-section{padding:64px 0}
-
-.section-label{
-font-family:'JetBrains Mono',monospace;
-font-size:12.5px;
-color:var(--yellow);
-letter-spacing:.05em;
-text-transform:uppercase;
-margin-bottom:10px;
+.pill:hover {
+  border-color: var(--accent);
 }
 
-.section-title{
-font-size:26px;
-margin-bottom:30px;
+.pill.badge {
+  color: var(--accent);
+  border-color: rgba(59, 130, 246, 0.3);
+  background: rgba(59, 130, 246, 0.08);
 }
 
-.about-text{
-font-size:16.5px;
-color:#D9D3C4;
-max-width:640px;
-margin-bottom:34px;
+section {
+  padding: 48px 0 80px;
 }
 
-.about-text + .about-text{margin-top:-20px}
-
-.skills{
-display:flex;
-flex-wrap:wrap;
-gap:9px;
+.section-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--accent);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  margin-bottom: 8px;
 }
 
-.skill{
-font-family:'JetBrains Mono',monospace;
-font-size:12.5px;
-color:var(--yellow);
-background:rgba(244,194,29,0.08);
-border:1px solid var(--yellow-dim);
-padding:6px 11px;
-border-radius:4px;
+.section-title {
+  font-size: 28px;
+  font-weight: 700;
+  margin-bottom: 32px;
 }
 
-.contact-grid{
-display:grid;
-grid-template-columns:1fr 1.3fr;
-gap:40px;
+.skills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 32px;
 }
 
-@media(max-width:720px){
-.contact-grid{grid-template-columns:1fr}
+.skill {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  padding: 6px 12px;
+  border-radius: 6px;
 }
 
-.contact-card{
-border:1px solid var(--line);
-background:var(--panel);
-border-radius:10px;
-padding:22px;
-display:flex;
-flex-direction:column;
-gap:16px;
+.contact-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.3fr;
+  gap: 32px;
 }
 
-.contact-channel{
-display:flex;
-align-items:center;
-justify-content:space-between;
-padding:14px;
-border:1px solid var(--line);
-border-radius:8px;
-background:var(--panel-2);
-transition:border-color .15s ease;
+@media(max-width: 720px) {
+  .contact-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
-.contact-channel:hover{border-color:var(--yellow-dim)}
-
-.cc-label{
-font-family:'JetBrains Mono',monospace;
-font-size:11px;
-color:var(--muted);
-text-transform:uppercase;
-letter-spacing:.04em;
-margin-bottom:4px;
+.contact-card {
+  border: 1px solid var(--panel-border);
+  background: var(--panel);
+  border-radius: 8px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
-.cc-value{font-size:14.5px}
-
-.cc-arrow{
-color:var(--yellow);
-font-family:'JetBrains Mono',monospace;
+.contact-channel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px;
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  background: var(--bg);
+  transition: border-color 0.15s ease;
 }
 
-form{
-display:flex;
-flex-direction:column;
-gap:16px;
-border:1px solid var(--line);
-background:var(--panel);
-border-radius:10px;
-padding:26px;
+.contact-channel:hover {
+  border-color: var(--accent);
 }
 
-.field label{
-display:block;
-font-family:'JetBrains Mono',monospace;
-font-size:12px;
-color:var(--muted);
-text-transform:uppercase;
-letter-spacing:.04em;
-margin-bottom:8px;
+.cc-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin-bottom: 2px;
 }
 
-.field input,.field textarea{
-width:100%;
-background:var(--panel-2);
-border:1px solid var(--line);
-color:var(--ink);
-font-family:'Inter',sans-serif;
-font-size:14.5px;
-padding:12px 13px;
-border-radius:6px;
-resize:vertical;
-transition:border-color .15s ease;
+.cc-value {
+  font-size: 14px;
 }
 
-.field textarea{min-height:100px}
-
-.field input:focus,.field textarea:focus{
-outline:none;
-border-color:var(--yellow);
+.cc-arrow {
+  color: var(--text-muted);
+  font-family: 'JetBrains Mono', monospace;
 }
 
-.submit-btn{
-display:inline-flex;
-align-items:center;
-justify-content:center;
-gap:8px;
-background:var(--yellow);
-color:#171307;
-font-family:'Space Grotesk',sans-serif;
-font-weight:600;
-font-size:15px;
-padding:13px 20px;
-border:none;
-border-radius:6px;
-cursor:pointer;
-transition:background .15s ease,opacity .15s ease;
+form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  border: 1px solid var(--panel-border);
+  background: var(--panel);
+  border-radius: 8px;
+  padding: 24px;
 }
 
-.submit-btn:hover{background:var(--yellow-deep)}
-
-.submit-btn:disabled{
-opacity:.6;
-cursor:not-allowed;
+.field label {
+  display: block;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin-bottom: 8px;
 }
 
-.form-status{
-font-family:'JetBrains Mono',monospace;
-font-size:13px;
-min-height:18px;
+.field input, .field textarea {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--panel-border);
+  color: var(--text-main);
+  font-family: 'Inter', sans-serif;
+  font-size: 14px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  resize: vertical;
+  transition: border-color 0.15s ease;
 }
 
-.form-status.ok{color:#7FD98A}
-.form-status.err{color:#E67373}
-
-footer{
-padding:30px 0 40px;
-font-family:'JetBrains Mono',monospace;
-font-size:12px;
-color:var(--muted);
-display:flex;
-justify-content:space-between;
-flex-wrap:wrap;
-gap:10px;
+.field textarea {
+  min-height: 100px;
 }
 
-footer .yellow{color:var(--yellow)}
-
-:focus-visible{
-outline:2px solid var(--yellow);
-outline-offset:2px;
+.field input:focus, .field textarea:focus {
+  outline: none;
+  border-color: var(--accent);
 }
 
-@media(prefers-reduced-motion:reduce){
-html{scroll-behavior:auto}
+.submit-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+  font-size: 14px;
+  padding: 12px 20px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s ease;
 }
 
-html{
-scrollbar-width:thin;
-scrollbar-color:var(--yellow) var(--bg);
+.submit-btn:hover {
+  background: var(--accent-hover);
 }
 
-::-webkit-scrollbar{width:12px}
-
-::-webkit-scrollbar-track{
-background:var(--bg);
-border-left:1px solid var(--line);
+.submit-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
-::-webkit-scrollbar-thumb{
-background:repeating-linear-gradient(
--45deg,
-var(--yellow) 0px,var(--yellow) 5px,
-var(--yellow-deep) 5px,var(--yellow-deep) 10px
-);
-border:2px solid var(--bg);
-border-radius:6px;
+.form-status {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  min-height: 18px;
 }
 
-::-webkit-scrollbar-thumb:hover{
-background:repeating-linear-gradient(
--45deg,
-var(--yellow) 0px,var(--yellow) 5px,
-#fff 5px,#fff 10px
-);
+.form-status.ok { color: #4ade80; }
+.form-status.err { color: #f87171; }
+
+footer {
+  padding: 32px 0;
+  border-top: 1px solid var(--panel-border);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
-::-webkit-scrollbar-corner{background:var(--bg)} </style>
-
+footer .footer-inner {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+</style>
 </head>
 <body>
 
 <header>
-<div class="wrap">
-<nav>
-<div class="logo">f8<span>di</span>.com</div>
-<div class="navlinks">
-<a href="#contact">Contact</a>
-</div>
-</nav>
-</div>
+  <div class="wrap">
+    <nav>
+      <div class="logo">f8di.com</div>
+      <div class="navlinks">
+        <a href="#contact">Contact</a>
+      </div>
+    </nav>
+  </div>
 </header>
 
 <section class="hero">
-<div class="wrap">
-<h1 class="hero-mark">F8<span>di</span></h1>
-<p class="sub">I've scaled and programmed multiple businesses alongside Roblox games.</p>
-<div class="hero-links">
-<span class="pill mono" style="color:var(--yellow);border-color:var(--yellow-dim);">Programmer</span>
-<a class="pill" href="https://www.roblox.com/users/4199299619/profile" target="_blank" rel="noopener">Roblox profile ↗</a>
-<a class="pill" href="https://discord.com/users/959655443578380288" target="_blank" rel="noopener">Discord ↗</a>
-</div>
-<div class="skills" style="margin-top:30px;">
-<span class="skill">Luau</span>
-<span class="skill">Lua</span>
-<span class="skill">JavaScript</span>
-<span class="skill">TypeScript</span>
-<span class="skill">Python</span>
-<span class="skill">SQL</span>
-<span class="skill">Node.js</span>
-<span class="skill">HTML</span>
-<span class="skill">CSS</span>
-<span class="skill">Bash</span>
-</div>
-</div>
+  <div class="wrap">
+    <h1 class="hero-mark">F8di</h1>
+    <p class="sub">I've scaled and programmed multiple businesses alongside Roblox games.</p>
+    <div class="hero-links">
+      <span class="pill badge">Programmer</span>
+      <a class="pill" href="https://www.roblox.com/users/4199299619/profile" target="_blank" rel="noopener">Roblox profile ↗</a>
+      <a class="pill" href="https://discord.com/users/959655443578380288" target="_blank" rel="noopener">Discord ↗</a>
+    </div>
+    <div class="skills">
+      <span class="skill">Luau</span>
+      <span class="skill">Lua</span>
+      <span class="skill">JavaScript</span>
+      <span class="skill">TypeScript</span>
+      <span class="skill">Python</span>
+      <span class="skill">SQL</span>
+      <span class="skill">Node.js</span>
+      <span class="skill">HTML</span>
+      <span class="skill">CSS</span>
+      <span class="skill">Bash</span>
+    </div>
+  </div>
 </section>
 
-<div class="hazard"></div>
-
 <section id="contact">
-<div class="wrap">
-<div class="section-label">Contact</div>
-<h2 class="section-title">Work with me</h2>
+  <div class="wrap">
+    <div class="section-label">Contact</div>
+    <h2 class="section-title">Work with me</h2>
 
-<div class="contact-grid">
-<div class="contact-card">
-<a class="contact-channel" href="https://discord.com/users/959655443578380288" target="_blank" rel="noopener">
-<div>
-<div class="cc-label">Discord</div>
-<div class="cc-value">Message me</div>
-</div>
-<span class="cc-arrow">↗</span>
-</a>
+    <div class="contact-grid">
+      <div class="contact-card">
+        <a class="contact-channel" href="https://discord.com/users/959655443578380288" target="_blank" rel="noopener">
+          <div>
+            <div class="cc-label">Discord</div>
+            <div class="cc-value">Message me</div>
+          </div>
+          <span class="cc-arrow">↗</span>
+        </a>
 
-<a class="contact-channel" href="https://www.roblox.com/users/4199299619/profile" target="_blank" rel="noopener">
-<div>
-<div class="cc-label">Roblox</div>
-<div class="cc-value">View profile</div>
-</div>
-<span class="cc-arrow">↗</span>
-</a>
-</div>
+        <a class="contact-channel" href="https://www.roblox.com/users/4199299619/profile" target="_blank" rel="noopener">
+          <div>
+            <div class="cc-label">Roblox</div>
+            <div class="cc-value">View profile</div>
+          </div>
+          <span class="cc-arrow">↗</span>
+        </a>
+      </div>
 
-<form id="contact-form">
-<div class="field">
-<label for="name">Your name</label>
-<input type="text" id="name" required maxlength="80" placeholder="Jane Doe">
-</div>
+      <form id="contact-form">
+        <div class="field">
+          <label for="name">Your name</label>
+          <input type="text" id="name" required maxlength="80" placeholder="Jane Doe">
+        </div>
 
-<div class="field">
-<label for="reach">Best way to reach you</label>
-<input type="text" id="reach" required maxlength="120" placeholder="Email, Discord handle, etc.">
-</div>
+        <div class="field">
+          <label for="reach">Best way to reach you</label>
+          <input type="text" id="reach" required maxlength="120" placeholder="Email, Discord handle, etc.">
+        </div>
 
-<div class="field">
-<label for="reason">Why are you reaching out?</label>
-<textarea id="reason" required maxlength="1000" placeholder="Tell me a bit about what you need"></textarea>
-</div>
+        <div class="field">
+          <label for="reason">Why are you reaching out?</label>
+          <textarea id="reason" required maxlength="1000" placeholder="Tell me a bit about what you need"></textarea>
+        </div>
 
-<button class="submit-btn" type="submit" id="submit-btn">Send message</button>
+        <button class="submit-btn" type="submit" id="submit-btn">Send message</button>
 
-<div class="form-status" id="form-status"></div>
-</form>
-</div>
-</div>
+        <div class="form-status" id="form-status"></div>
+      </form>
+    </div>
+  </div>
 </section>
 
 <footer>
-<div class="wrap" style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;">
-<span>© 2026 <span class="yellow">F8di</span></span>
-<span>f8di.com</span>
-</div>
+  <div class="wrap footer-inner">
+    <span>© 2026 F8di</span>
+    <span>f8di.com</span>
+  </div>
 </footer>
 
 <script>
-const CONTACT_ENDPOINT="/contact";
+const CONTACT_ENDPOINT = "/contact";
 
-const form=document.getElementById('contact-form');
-const btn=document.getElementById('submit-btn');
-const status=document.getElementById('form-status');
+const form = document.getElementById('contact-form');
+const btn = document.getElementById('submit-btn');
+const status = document.getElementById('form-status');
 
-form.addEventListener('submit',async(e)=>{
-e.preventDefault();
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
 
-const name=document.getElementById('name').value.trim();
-const reach=document.getElementById('reach').value.trim();
-const reason=document.getElementById('reason').value.trim();
+  const name = document.getElementById('name').value.trim();
+  const reach = document.getElementById('reach').value.trim();
+  const reason = document.getElementById('reason').value.trim();
 
-if(!name||!reach||!reason){
-status.textContent="Please fill in every field.";
-status.className="form-status err";
-return;
-}
+  if (!name || !reach || !reason) {
+    status.textContent = "Please fill in every field.";
+    status.className = "form-status err";
+    return;
+  }
 
-btn.disabled=true;
-btn.textContent="Sending...";
-status.textContent="";
-status.className="form-status";
+  btn.disabled = true;
+  btn.textContent = "Sending...";
+  status.textContent = "";
+  status.className = "form-status";
 
-const payload={
-username:"f8di.com contact form",
-embeds:[
-{
-title:"New contact form message",
-color:16037917,
-fields:[
-{name:"Name",value:name,inline:true},
-{name:"Contact info",value:reach,inline:true},
-{name:"Reason",value:reason,inline:false}
-],
-timestamp:new Date().toISOString()
-}
-]
-};
+  const payload = {
+    username: "f8di.com contact form",
+    embeds: [
+      {
+        title: "New contact form message",
+        color: 3898870,
+        fields: [
+          { name: "Name", value: name, inline: true },
+          { name: "Contact info", value: reach, inline: true },
+          { name: "Reason", value: reason, inline: false }
+        ],
+        timestamp: new Date().toISOString()
+      }
+    ]
+  };
 
-try{
-const res=await fetch(CONTACT_ENDPOINT,{
-method:"POST",
-headers:{"Content-Type":"application/json"},
-body:JSON.stringify(payload)
-});
+  try {
+    const res = await fetch(CONTACT_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
 
-const data=await res.json().catch(()=>({ok:false}));
+    const data = await res.json().catch(() => ({ ok: false }));
 
-if(res.ok&&data.ok){
-status.textContent="Message sent — I'll get back to you soon.";
-status.className="form-status ok";
-form.reset();
-}else{
-throw new Error("Proxy reported failure");
-}
-}catch(err){
-status.textContent="Something went wrong sending that. Try reaching out on Discord instead.";
-status.className="form-status err";
-}finally{
-btn.disabled=false;
-btn.textContent="Send message";
-}
+    if (res.ok && data.ok) {
+      status.textContent = "Message sent — I'll get back to you soon.";
+      status.className = "form-status ok";
+      form.reset();
+    } else {
+      throw new Error("Proxy reported failure");
+    }
+  } catch (err) {
+    status.textContent = "Something went wrong sending that. Try reaching out on Discord instead.";
+    status.className = "form-status err";
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Send message";
+  }
 });
 </script>
 
