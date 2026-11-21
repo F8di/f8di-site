@@ -5,7 +5,8 @@ import { REPORT_TYPES, generateReport } from "./reports.js";
 import { createExperience, economyAnalytics, experienceAnalytics, rotateToken } from "./telemetry.js";
 import { fetchItemDetails, openCloudUniverse, resolveGameRef, searchCatalog, searchGames } from "./roblox.js";
 import { destroyAllSessions, listSessions } from "./auth.js";
-import { DAY, HttpError, intParam, json, now, rangeFrom } from "./util.js";
+import { STATE_COOKIE, accountStatus, disconnect, oauthConfig, officialMetrics, refreshResources, startConnect, syncOfficial } from "./robloxAccount.js";
+import { DAY, HttpError, cookie, intParam, json, now, rangeFrom } from "./util.js";
 
 const DEFAULT_LISTS = [["Tracking", "games"], ["Bookmarks", "games"], ["Competitors", "games"], ["Watchlist", "items"]];
 
@@ -65,6 +66,7 @@ export function configStatus(env) {
     alertWebhook: !!env.STATS_ALERT_WEBHOOK_URL,
     workersAi: !!env.AI,
     openCloudKey: !!env.ROBLOX_OPEN_CLOUD_KEY,
+    robloxOAuth: oauthConfig(env).ok,
     settings: s,
   };
 }
@@ -310,6 +312,21 @@ export async function handleApi(env, db, request, ctx, path) {
     }
   }
 
+  if (a === "roblox") {
+    if (!b && m === "GET") return json(await accountStatus(env, db));
+    if (b === "connect" && m === "POST") {
+      const origin = request.headers.get("Origin") || url.origin;
+      const { url: to, state } = await startConnect(env, db, origin);
+      return json({ url: to }, 200, { "Set-Cookie": cookie(STATE_COOKIE, state, { maxAge: 600, sameSite: "Lax" }) });
+    }
+    if (b === "disconnect" && m === "POST") {
+      await disconnect(env, db);
+      return json({ ok: true });
+    }
+    if (b === "resources" && m === "POST") return json({ universes: await refreshResources(env, db) });
+    if (b === "sync" && m === "POST") return json({ stored: await syncOfficial(env, db) });
+  }
+
   if (a === "experiences") {
     if (!b && m === "GET") return json({ experiences: await all(db, "SELECT id, universe_id, name, ingest_key, created_at, last_event_at, cloud_checked_at, cloud_status FROM experiences ORDER BY id"), openCloudKey: !!env.ROBLOX_OPEN_CLOUD_KEY });
     if (!b && m === "POST") {
@@ -323,6 +340,8 @@ export async function handleApi(env, db, request, ctx, path) {
     if (b && c === "rotate" && m === "POST") return json({ token: await rotateToken(env, db, id(b)) });
     if (b && !c && m === "DELETE") {
       await run(db, "DELETE FROM telemetry_events WHERE experience_id = ?", id(b));
+      const exp = await first(db, "SELECT universe_id FROM experiences WHERE id = ?", id(b));
+      if (exp) await run(db, "DELETE FROM official_metrics WHERE universe_id = ?", exp.universe_id);
       await run(db, "DELETE FROM experiences WHERE id = ?", id(b));
       return json({ ok: true });
     }
@@ -339,6 +358,12 @@ export async function handleApi(env, db, request, ctx, path) {
       }
       await run(db, "UPDATE experiences SET cloud_checked_at = ?, cloud_status = ? WHERE id = ?", now(), status, exp.id);
       return json(JSON.parse(status));
+    }
+    if (b && c === "official" && m === "GET") {
+      const exp = await first(db, "SELECT universe_id FROM experiences WHERE id = ?", id(b));
+      if (!exp) throw new HttpError(404, "Experience not found");
+      const { from, to } = rangeFrom(url);
+      return json(await officialMetrics(db, exp.universe_id, from, to));
     }
     if (b && (c === "analytics" || c === "economy") && m === "GET") {
       const { from, to } = rangeFrom(url);

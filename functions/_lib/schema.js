@@ -25,6 +25,7 @@ CREATE INDEX IF NOT EXISTS jobs_status_run ON jobs (status, run_after);
 CREATE TABLE IF NOT EXISTS collection_runs (id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER, job_type TEXT NOT NULL, started_at INTEGER NOT NULL, finished_at INTEGER, ok INTEGER, items INTEGER, error TEXT);
 CREATE INDEX IF NOT EXISTS collection_runs_started ON collection_runs (started_at);
 CREATE TABLE IF NOT EXISTS reports (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT NOT NULL, title TEXT NOT NULL, created_at INTEGER NOT NULL, period_start INTEGER, period_end INTEGER, confidence REAL, body TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS official_metrics (universe_id INTEGER NOT NULL, metric TEXT NOT NULL, day TEXT NOT NULL, value REAL, source TEXT, fetched_at INTEGER, PRIMARY KEY (universe_id, metric, day)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS experiences (id INTEGER PRIMARY KEY AUTOINCREMENT, universe_id INTEGER NOT NULL UNIQUE, name TEXT, ingest_key TEXT NOT NULL UNIQUE, token_hash TEXT NOT NULL, created_at INTEGER NOT NULL, last_event_at INTEGER, cloud_checked_at INTEGER, cloud_status TEXT);
 CREATE TABLE IF NOT EXISTS telemetry_events (id INTEGER PRIMARY KEY AUTOINCREMENT, experience_id INTEGER NOT NULL, ts INTEGER NOT NULL, type TEXT NOT NULL, player TEXT, session TEXT, name TEXT, amount REAL, currency TEXT, source TEXT, rarity TEXT, data TEXT, event_id TEXT);
 CREATE UNIQUE INDEX IF NOT EXISTS telemetry_event_id ON telemetry_events (experience_id, event_id);

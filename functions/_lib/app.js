@@ -5,6 +5,7 @@ import { ensureDefaults, handleApi } from "./api.js";
 import { LOGIN_CSRF_COOKIE, attemptLogin, authConfig, checkCsrf, clearSessionCookie, destroySession, getSession, sameOrigin } from "./auth.js";
 import { tick } from "./collector.js";
 import { ingest } from "./telemetry.js";
+import { STATE_COOKIE, finishConnect } from "./robloxAccount.js";
 import { HttpError, cookie, escapeHtml, html, json, parseCookies, randomToken, safeEqual } from "./util.js";
 import shellHtml from "./ui/shell.html";
 import loginHtml from "./ui/login.html";
@@ -81,6 +82,19 @@ async function route(ctx, path, nonce) {
       if (!result.ok) return loginPage(nonce, randomToken(18), "Invalid credentials.", 401);
       return redirect("/stats", [result.session.cookie, cookie(LOGIN_CSRF_COOKIE, "", { maxAge: 0 })]);
     }
+  }
+
+  if (path === "roblox/callback" && method === "GET") {
+    let msg = "Roblox account connected.";
+    try {
+      const user = await finishConnect(env, db, new URL(request.url), parseCookies(request)[STATE_COOKIE]);
+      if (user?.preferred_username) msg = `Connected Roblox account @${user.preferred_username}.`;
+    } catch (e) {
+      msg = e instanceof HttpError ? e.message : "Roblox sign-in failed. Try again from Settings.";
+      if (!(e instanceof HttpError)) console.error("[stats] roblox oauth", e?.stack || e);
+    }
+    // A same-site follow-up navigation, so the SameSite=Strict session cookie is sent again.
+    return html(`<!doctype html><meta charset="utf-8"><meta name="robots" content="noindex"><meta http-equiv="refresh" content="1;url=/stats#/settings"><title>Roblox account</title><p>${escapeHtml(msg)}</p><p><a href="/stats#/settings">Back to settings</a></p>`, 200, { "Set-Cookie": cookie(STATE_COOKIE, "", { maxAge: 0, sameSite: "Lax" }) });
   }
 
   const session = await getSession(env, db, request);

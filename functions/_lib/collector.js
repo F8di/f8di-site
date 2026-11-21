@@ -2,6 +2,7 @@ import { all, batch, first, getMeta, run, setMeta } from "./db.js";
 import { computeMetrics, fmtPct, itemMetrics, trackedUniverseIds } from "./analytics.js";
 import { fetchAssetIcons, fetchExploreSorts, fetchGameIcons, fetchGames, fetchItemDetails, fetchResaleData } from "./roblox.js";
 import { DAY, HOUR, chunk, dayKey, hourKey, now } from "./util.js";
+import { hasOfficialCredentials, syncOfficial } from "./robloxAccount.js";
 
 const MIN = 60_000;
 
@@ -70,6 +71,7 @@ async function schedule(env, db) {
   }
   if (await due(db, "rollup", s.rollupIntervalMin * MIN - 30_000)) await enqueue(db, "rollup", {}, { delayMs: 60_000 });
   if (await due(db, "cleanup", DAY)) await enqueue(db, "cleanup", {});
+  if ((await hasOfficialCredentials(env, db)) && (await due(db, "official", 6 * HOUR))) await enqueue(db, "official_analytics", {});
   const utc = new Date(t);
   if (utc.getUTCHours() >= 1 && (await getMeta(db, "report:daily")) !== dayKey(t)) {
     await setMeta(db, "report:daily", dayKey(t));
@@ -282,7 +284,7 @@ async function report(env, db, { type, options }) {
   return r ? 1 : 0;
 }
 
-const HANDLERS = { collect_games: collectGames, discover, collect_items: collectItems, item_resale: itemResale, rollup, cleanup, report };
+const HANDLERS = { collect_games: collectGames, discover, collect_items: collectItems, item_resale: itemResale, rollup, cleanup, report, official_analytics: (env, db, p) => syncOfficial(env, db, p) };
 
 // ---------- events & alerts ----------
 
@@ -383,7 +385,7 @@ export async function queueStatus(db) {
   const retrying = await all(db, "SELECT id, type, attempts, last_error, run_after FROM jobs WHERE status = 'queued' AND attempts > 0 ORDER BY run_after LIMIT 20");
   const runs = await all(db, "SELECT job_type, started_at, finished_at, ok, items, error FROM collection_runs ORDER BY id DESC LIMIT 40");
   const lastOk = await all(db, "SELECT job_type, MAX(finished_at) AS at FROM collection_runs WHERE ok = 1 GROUP BY job_type");
-  const errors24h = await all(db, "SELECT job_type, COUNT(*) AS n, MAX(error) AS sample FROM collection_runs WHERE ok = 0 AND started_at > ? GROUP BY job_type", now() - DAY);
+  const errors24h = await all(db, "SELECT job_type, COUNT(*) AS n, MAX(error) AS sample FROM collection_runs f WHERE ok = 0 AND started_at > ? AND NOT EXISTS (SELECT 1 FROM collection_runs s WHERE s.job_type = f.job_type AND s.ok = 1 AND s.started_at > f.started_at) GROUP BY job_type", now() - DAY);
   return { counts: Object.fromEntries(counts.map((c) => [c.status, c.n])), failed, retrying, runs, lastOk: Object.fromEntries(lastOk.map((r) => [r.job_type, r.at])), errors24h, lastTickAt: Number(await getMeta(db, "last_tick_at")) || null };
 }
 

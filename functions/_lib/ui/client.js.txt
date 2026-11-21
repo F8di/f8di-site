@@ -581,7 +581,7 @@ return Stats`;
   VIEWS.experiences = async () => {
     const r = await api("experiences");
     const root = html(`<div></div>`);
-    const c = card("Connect an experience you own", `<div class="row"><input class="in" id="eref" placeholder="roblox.com/games URL, place id, or u:<universe id>"><button class="btn" id="econ">Connect</button></div><div id="enew" class="section"></div><p class="muted small section">Data comes from telemetry your experience sends to this dashboard (sessions, purchases, currency, items, progression, errors, performance, custom events). Roblox Open Cloud is used with a server-side key (ROBLOX_OPEN_CLOUD_KEY${r.openCloudKey ? ", configured" : ", not configured"}) to verify universe metadata. Roblox's own Creator Dashboard figures are not imported; retention, revenue and engagement here are computed from your telemetry.</p>`);
+    const c = card("Connect an experience you own", `<div class="row"><input class="in" id="eref" placeholder="roblox.com/games URL, place id, or u:<universe id>"><button class="btn" id="econ">Connect</button></div><div id="enew" class="section"></div><p class="muted small section">Data comes from telemetry your experience sends to this dashboard (sessions, purchases, currency, items, progression, errors, performance, custom events). Official Roblox Analytics figures (DAU, MAU, retention, revenue, payers, peak players) are imported for connected experiences once you connect your Roblox account in <a href="#/settings">Settings</a> or set an Open Cloud key (ROBLOX_OPEN_CLOUD_KEY${r.openCloudKey ? ", configured" : ", not configured"}); they are shown separately from figures computed from your telemetry.</p>`);
     $("#econ", c).onclick = async () => {
       try {
         const res = await api("experiences", { method: "POST", body: { ref: $("#eref", c).value.trim() } });
@@ -600,8 +600,30 @@ return Stats`;
       $$(".rot", w).forEach((b) => (b.onclick = async () => { if (!confirm("Rotate token? The old token stops working immediately.")) return; const res = await api(`experiences/${b.dataset.id}/rotate`, { method: "POST" }); prompt("New token (copy now):", res.token); }));
       $$(".del", w).forEach((b) => (b.onclick = async () => { if (!confirm("Delete this experience and all its telemetry?")) return; await api(`experiences/${b.dataset.id}`, { method: "DELETE" }); render(); }));
     } }))]));
+    const acct = await api("roblox").catch(() => null);
+    const known = new Set(r.experiences.map((e) => Number(e.universe_id)));
+    const missing = (acct?.universes || []).filter((u) => !known.has(Number(u)));
+    if (missing.length) {
+      const m = card("Games on your Roblox account", `<p class="muted small">Your Roblox sign-in gives access to these universes. Add them to import their official stats.</p><div class="row section">${missing.map((u) => `<button class="btn ghost sm addu" data-u="${u}">Add universe ${u}</button>`).join(" ")}</div>`);
+      $$(".addu", m).forEach((b) => (b.onclick = async () => { try { await api("experiences", { method: "POST", body: { universeId: b.dataset.u } }); toast("Added. Official stats import on the next sync."); render(); } catch (e) { toast(e.message, true); } }));
+      root.append(m);
+    }
     const exp = await expPicker(root);
     if (exp) {
+      const o = await api(`experiences/${exp.id}/official?${rangeQS()}`);
+      const os = o.summary, ser = (k) => (o.series[k] || []).map((p) => ({ t: Date.parse(p.day), v: p.value }));
+      const srcLabel = o.sources.length ? `Observed · Roblox Analytics API (${o.sources.map((x) => (x === "oauth" ? "Roblox account" : "Open Cloud key")).join(", ")}) · updated ${esc(ago(o.fetchedAt))}` : (acct?.connected || acct?.apiKeyFallback ? "Not imported yet. Use Sync now in Settings, or wait for the next scheduled import." : "Unavailable. Connect your Roblox account in Settings to import official stats.");
+      root.append(html(`<h3 class="section">Official Roblox stats</h3>`));
+      root.append(html(`<p class="muted small">${srcLabel}</p>`));
+      if (o.sources.length) {
+        root.append(grid("g6", [kpi("Avg DAU", num(os.avgDau)), kpi("MAU", num(os.mau)), kpi("D1 / D7 retention", `${pctPlain(os.d1)} / ${pctPlain(os.d7)}`), kpi("Avg session", isNum(os.avgSessionMin) ? `${os.avgSessionMin.toFixed(1)} min` : "–"), kpi("Revenue", isNum(os.revenue) ? `R$ ${compact(os.revenue)}` : "–"), kpi("Peak CCU", num(os.peakCcu))]));
+        root.append(grid("g3", [
+          card("Daily active users (Roblox)", lineChart([{ name: "DAU", points: ser("DailyActiveUsers") }, { name: "MAU", points: ser("MonthlyActiveUsers") }])),
+          card("Retention (Roblox)", lineChart([{ name: "D1", points: ser("ForwardD1Retention") }, { name: "D7", points: ser("ForwardD7Retention") }, { name: "D30", points: ser("ForwardD30Retention") }], { yFmt: (v) => pctPlain(v, 0) })),
+          card("Revenue (Roblox)", lineChart([{ name: "Robux", color: "#34d399", points: ser("DailyRevenue") }, { name: "Paying users", points: ser("PayingUsers") }])),
+        ]));
+      }
+      root.append(html(`<h3 class="section">From your telemetry</h3>`));
       const a = await api(`experiences/${exp.id}/analytics?${rangeQS()}`);
       const s = a.summary;
       root.append(grid("g6", [kpi("Users", num(s.users)), kpi("Avg DAU", num(s.avgDau)), kpi("Sessions", num(s.sessions)), kpi("Avg session", s.avgSessionSec ? `${(s.avgSessionSec / 60).toFixed(1)} min` : "–"), kpi("Sessions / user", num(s.sessionsPerUser, 2)), kpi("Script errors", num(s.errors))]));
@@ -752,7 +774,7 @@ return Stats`;
   };
 
   VIEWS.settings = async () => {
-    const [st, se] = await Promise.all([api("status"), api("sessions")]);
+    const [st, se, ra] = await Promise.all([api("status"), api("sessions"), api("roblox")]);
     const cfg = st.config, q = st.queue;
     const yes = (b, extra = "") => (b ? `<span class="ok">Configured</span>` : `<span class="muted">Not set</span>${extra}`);
     const root = html(`<div></div>`);
@@ -761,6 +783,19 @@ return Stats`;
         <dl class="kv section"><dt>Tracked games</dt><dd>every ${cfg.settings.trackedIntervalMin} min (raw snapshots)</dd><dt>Discovered games</dt><dd>every ${cfg.settings.discoveryIntervalMin} min, up to ${cfg.settings.discoveryCap} games</dd><dt>Collectibles</dt><dd>every ${cfg.settings.itemIntervalMin} min</dd><dt>Metrics computed</dt><dd>${esc(ago(st.metricsComputedAt))}</dd></dl>`),
       card("Collection", `${collectionStatus(q)}<div class="row section"><button class="btn" id="collect">Collect now</button><button class="btn ghost" id="retry" ${q.failed.length ? "" : "disabled"}>Retry failed jobs (${q.failed.length})</button></div>`),
     ]));
+    const redirect = `${location.origin}/stats/roblox/callback`;
+    const who = ra.user ? `@${esc(ra.user.username || ra.user.id)}${ra.user.displayName ? ` (${esc(ra.user.displayName)})` : ""}` : "your account";
+    const rc = card("Roblox account", ra.connected
+      ? `<dl class="kv"><dt>Connected</dt><dd><span class="ok">${who}</span> since ${esc(dt(ra.connectedAt))}</dd><dt>Permissions</dt><dd class="mono small">${esc(ra.scope || "–")}</dd><dt>Games authorised</dt><dd>${ra.universes.length ? ra.universes.map((u) => `<span class="mono">${u}</span>`).join(", ") : "none reported"}</dd><dt>Last import</dt><dd>${esc(ago(ra.lastSyncAt))}</dd><dt>Sign-in renews by</dt><dd>${esc(dt(ra.refreshExpiresAt))}</dd>${ra.lastError ? `<dt>Last error</dt><dd class="bad small">${esc(ra.lastError)}</dd>` : ""}</dl><div class="row section"><button class="btn" id="rsync">Sync now</button><button class="btn ghost" id="rres">Refresh games</button><button class="btn danger" id="rdis">Disconnect</button></div><p class="muted small section">Official stats are imported every 6 hours from Roblox's Analytics API. Tokens are encrypted in the database and never sent to the browser.</p>`
+      : ra.configured
+        ? `<p>Sign in with Roblox and pick the games to share. The dashboard then imports their official DAU, MAU, retention, session length, revenue and paying-user stats.</p><div class="row section"><button class="btn" id="rcon">Connect Roblox account</button></div>`
+        : `<p class="muted">Not configured. To enable Roblox sign-in:</p><ol class="small"><li>Create an OAuth app at <a href="https://create.roblox.com/dashboard/credentials?activeTab=OAuthTab" target="_blank" rel="noopener noreferrer">Creator Dashboard → OAuth 2.0 Apps</a>.</li><li>Add the redirect URL <span class="mono">${esc(redirect)}</span> and the permissions <span class="mono">openid</span>, <span class="mono">profile</span> and <span class="mono">universe.analytics:read</span>.</li><li>Set the secrets <span class="mono">ROBLOX_OAUTH_CLIENT_ID</span> and <span class="mono">ROBLOX_OAUTH_CLIENT_SECRET</span> on Cloudflare Pages, then redeploy.</li></ol>${ra.apiKeyFallback ? `<p class="small section">An Open Cloud key is configured, so official stats are already imported for experiences that key can read.</p><div class="row"><button class="btn" id="rsync">Sync now</button></div>` : ""}`);
+    root.append(grid("g1", [rc]));
+    const busy = (fn) => async (e) => { e.target.disabled = true; try { await fn(); } catch (err) { toast(err.message, true); e.target.disabled = false; } };
+    if ($("#rcon", rc)) $("#rcon", rc).onclick = busy(async () => { const r = await api("roblox/connect", { method: "POST" }); location.href = r.url; });
+    if ($("#rsync", rc)) $("#rsync", rc).onclick = busy(async () => { const r = await api("roblox/sync", { method: "POST" }); toast(`Imported ${r.stored} data points.`); render(); });
+    if ($("#rres", rc)) $("#rres", rc).onclick = busy(async () => { const r = await api("roblox/resources", { method: "POST" }); toast(`${r.universes.length} game(s) authorised.`); render(); });
+    if ($("#rdis", rc)) $("#rdis", rc).onclick = (e) => { if (confirm("Disconnect your Roblox account? Imported stats are kept.")) busy(async () => { await api("roblox/disconnect", { method: "POST" }); render(); })(e); };
     $("#collect", root).onclick = async (e) => { e.target.disabled = true; try { const r = await api("collect", { method: "POST" }); toast(`Ran ${r.ran.length} job(s), ${r.ran.filter((x) => !x.ok).length} failed, ${r.remaining} queued.`); render(); } catch (err) { toast(err.message, true); e.target.disabled = false; } };
     $("#retry", root).onclick = async () => { await api("jobs/retry-failed", { method: "POST" }); render(); };
     root.append(grid("g1", [card("Recent job runs", table([{ k: "job_type", label: "Job" }, { k: "started_at", label: "Started", fmt: dt }, { k: "finished_at", label: "Took", num: true, sort: (r) => r.finished_at - r.started_at, fmt: (v, r) => (v ? `${((v - r.started_at) / 1000).toFixed(1)}s` : "running") }, { k: "ok", label: "Result", fmt: (v) => (v ? `<span class="ok">ok</span>` : v === 0 ? `<span class="bad">failed</span>` : "–") }, { k: "items", label: "Items", num: true }, { k: "error", label: "Error", fmt: (v) => `<span class="small">${esc(v || "")}</span>` }], q.runs, { name: "job-runs" }))]));

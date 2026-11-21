@@ -1,6 +1,6 @@
 import { SCHEMA_SQL as schemaSql } from "./schema.js";
 
-export const SCHEMA_VERSION = "2";
+export const SCHEMA_VERSION = "3";
 let schemaReady = false;
 
 export function getDb(env) {
