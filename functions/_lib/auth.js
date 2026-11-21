@@ -1,4 +1,4 @@
-import { all, first, run, getMeta, setMeta } from "./db.js";
+import { all, first, run } from "./db.js";
 import { b64decode, clientIp, cookie, parseCookies, randomToken, safeEqual, sha256Hex, now, HOUR } from "./util.js";
 
 export const SESSION_COOKIE = "__Host-f8di_stats";
@@ -102,14 +102,15 @@ export async function attemptLogin(env, db, request, { username, password, code 
   const passOk = await verifyPassword(String(password || ""), env.STATS_PASSWORD_HASH);
   const step = await verifyTotp(env.STATS_TOTP_SECRET, String(code || "").replace(/\s/g, ""));
   let totpOk = step !== null;
-  if (totpOk) {
-    const last = parseInt((await getMeta(db, "totp_last_step")) || "0", 10);
-    if (step <= last) totpOk = false; // replayed code
+  if (totpOk && userOk && passOk) {
+    // Atomically consume the time step so a code can't be replayed, even by concurrent requests.
+    await run(db, "INSERT OR IGNORE INTO meta (key, value) VALUES ('totp_last_step', '0')");
+    const res = await run(db, "UPDATE meta SET value = ? WHERE key = 'totp_last_step' AND CAST(value AS INTEGER) < ?", String(step), step);
+    totpOk = (res.meta?.changes || 0) > 0;
   }
   const ok = userOk && passOk && totpOk;
   await recordAttempt(db, ipHash, ok);
   if (!ok) return { ok: false };
-  await setMeta(db, "totp_last_step", step);
   const session = await createSession(env, db, request, ipHash);
   return { ok: true, session };
 }
