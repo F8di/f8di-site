@@ -390,7 +390,7 @@ $("load-btn").addEventListener("click", async () => {
   $("load-btn").disabled = true;
   await load(parsed, status);
   $("load-btn").disabled = false;
-  $("token-url").value = "";
+  if (loadSession()) $("token-url").value = "";
 });
 
 $("refresh-btn").addEventListener("click", async () => {
