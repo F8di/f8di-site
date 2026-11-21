@@ -87,11 +87,13 @@ export async function startConnect(env, db, origin) {
 // It is authorised by the one-time state that only a signed-in owner could create, bound to this browser by a Lax cookie.
 export async function finishConnect(env, db, url, stateCookie) {
   const pending = await open(env, await getMeta(db, "roblox_oauth_pending"));
-  await run(db, "DELETE FROM meta WHERE key = 'roblox_oauth_pending'");
   const state = url.searchParams.get("state") || "";
   if (!pending || pending.exp < now() || !stateCookie || !safeEqual(state, stateCookie) || !safeEqual(await sha256Hex(state), pending.stateHash)) {
     throw new HttpError(400, "This Roblox sign-in link expired or was already used. Start again from Settings.");
   }
+  // One-time use: only the request that wins this delete may redeem the code.
+  const claimed = await run(db, "DELETE FROM meta WHERE key = 'roblox_oauth_pending'");
+  if (!(claimed.meta?.changes > 0)) throw new HttpError(400, "This Roblox sign-in link was already used. Start again from Settings.");
   if (url.searchParams.get("error")) throw new HttpError(400, `Roblox sign-in was cancelled (${url.searchParams.get("error")}).`);
   const tokens = await tokenRequest(env, { grant_type: "authorization_code", code: url.searchParams.get("code") || "", code_verifier: pending.verifier, redirect_uri: pending.redirectUri });
   const user = await fetch(USERINFO_URL, { headers: { Authorization: `Bearer ${tokens.access_token}` }, signal: AbortSignal.timeout(12_000) }).then((r) => (r.ok ? r.json() : {})).catch(() => ({}));
@@ -130,6 +132,10 @@ export async function accessToken(env, db) {
     const lock = await run(db, "UPDATE meta SET value = ? WHERE key = 'roblox_oauth_lock' AND CAST(value AS INTEGER) < ?", String(now()), now() - 30_000);
     if ((lock.meta?.changes || 0) > 0) {
       try {
+        const fresh = await loadAccount(env, db); // another caller may have refreshed before we got the lock
+        if (!fresh) return null;
+        if (fresh.accessExpiresAt - now() > 60_000) return fresh.accessToken;
+        acc.refreshToken = fresh.refreshToken;
         const tokens = await tokenRequest(env, { grant_type: "refresh_token", refresh_token: acc.refreshToken });
         return (await saveTokens(env, db, tokens, acc.user)).accessToken;
       } catch (e) {
@@ -206,6 +212,7 @@ async function queryMetric(auth, universeId, metric, startTime, endTime) {
     op = await analyticsFetch(QUERY_BASE + op.path.replace(/^\//, ""), auth);
   }
   if (!op.done) throw new HttpError(503, `analytics query for ${metric} is still running; it will be retried`);
+  if (op.error) throw new HttpError(502, `analytics query for ${metric} failed: ${JSON.stringify(op.error).slice(0, 200)}`);
   return (op.response?.values?.[0]?.dataPoints || []).filter((p) => p.time && Number.isFinite(Number(p.value))).map((p) => ({ day: p.time.slice(0, 10), value: Number(p.value) }));
 }
 
@@ -233,16 +240,17 @@ export async function syncOfficial(env, db, { universeIds, days } = {}) {
   for (const { universe_id: u } of exps) {
     const creds = await credentialsFor(env, db, u);
     if (!creds.length) continue;
-    const have = await first(db, "SELECT COUNT(*) AS n FROM official_metrics WHERE universe_id = ?", u);
-    const span = days || (have?.n ? 35 : 90);
     for (const metric of Object.keys(OFFICIAL_METRICS)) {
+      const have = await first(db, "SELECT COUNT(*) AS n FROM official_metrics WHERE universe_id = ? AND metric = ?", u, metric);
+      const span = days || (have?.n ? 35 : 90);
       const start = new Date(end.getTime() - Math.min(span, SHORT_HISTORY.has(metric) ? 27 : span) * DAY);
       let points = null;
       let lastErr = null;
       for (const c of creds) {
         try {
-          points = await queryMetric(c.auth, u, metric, start.toISOString(), end.toISOString());
-          if (points.length) await db.batch(points.map((p) => db.prepare("INSERT INTO official_metrics (universe_id, metric, day, value, source, fetched_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (universe_id, metric, day) DO UPDATE SET value = excluded.value, source = excluded.source, fetched_at = excluded.fetched_at").bind(u, metric, p.day, p.value, c.source, now())));
+          const got = await queryMetric(c.auth, u, metric, start.toISOString(), end.toISOString());
+          if (got.length) await db.batch(got.map((p) => db.prepare("INSERT INTO official_metrics (universe_id, metric, day, value, source, fetched_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (universe_id, metric, day) DO UPDATE SET value = excluded.value, source = excluded.source, fetched_at = excluded.fetched_at").bind(u, metric, p.day, p.value, c.source, now())));
+          points = got;
           break;
         } catch (e) {
           lastErr = e;
