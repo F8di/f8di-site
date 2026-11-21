@@ -231,7 +231,11 @@ async function itemResale(env, db, { ids }) {
       await batch(db, stmts);
       n++;
     } catch (e) {
-      errors.push(`${id}: ${e.message}`);
+      if (e.status === 400) {
+        // Newer UGC collectibles have no legacy resale feed; that is not a collection error.
+        await run(db, "UPDATE items SET resale_checked_at = ? WHERE asset_id = ?", now(), id);
+        n++;
+      } else errors.push(`${id}: ${e.message}`);
     }
   }
   if (errors.length === (ids || []).length && errors.length) throw new Error(errors.join("; ").slice(0, 400));
