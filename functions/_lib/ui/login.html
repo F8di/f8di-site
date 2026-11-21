@@ -20,6 +20,8 @@ input:focus{border-color:#22d3ee;box-shadow:0 0 0 3px rgba(34,211,238,.15)}
 button{margin-top:22px;width:100%;padding:12px;border:0;border-radius:10px;background:linear-gradient(135deg,#06b6d4,#3b82f6);color:#fff;font-weight:600;font-size:15px;cursor:pointer}
 button:hover{filter:brightness(1.1)}
 .err{margin-top:16px;padding:10px 12px;border-radius:10px;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.35);color:#fca5a5;font-size:13px}
+.remember{display:flex;align-items:center;gap:8px;margin:16px 0 0;text-transform:none;letter-spacing:0;font-size:13px;color:#c9d1d9;cursor:pointer}
+.remember input{width:16px;height:16px;padding:0;accent-color:#22d3ee}
 .foot{margin-top:18px;color:#5b6573;font-size:12px;text-align:center}
 </style>
 </head>
@@ -34,9 +36,10 @@ button:hover{filter:brightness(1.1)}
   <input id="password" name="password" type="password" autocomplete="current-password" required maxlength="200">
   <label for="code">Authenticator code</label>
   <input id="code" name="code" inputmode="numeric" pattern="[0-9 ]{6,7}" autocomplete="one-time-code" required maxlength="7" placeholder="123 456">
+  <label class="remember"><input type="checkbox" name="remember" value="1"> Stay signed in for 30 days</label>
   <button type="submit">Sign in</button>
   {{ERROR}}
-  <div class="foot">Sessions expire after 2 hours idle or 12 hours total.</div>
+  <div class="foot">Sessions expire after 2 hours idle or 12 hours total, or 7 days idle and 30 days total if you stay signed in. Only tick it on your own device.</div>
 </form>
 </body>
 </html>

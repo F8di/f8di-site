@@ -6,7 +6,7 @@ Private Roblox analytics dashboard. It runs as Cloudflare Pages Functions in thi
 
 - `functions/stats/_middleware.js` answers every `/stats/*` request. It never falls through to static files.
 - One owner account, set by secrets. There is no registration. Sign-in needs the username, a password (PBKDF2-SHA256, 100k iterations) and a TOTP code. A TOTP code can't be reused.
-- Sessions are random tokens. The database stores only their hashes. The cookie is `__Host-`, HttpOnly, Secure and SameSite=Strict. A session expires after 2 hours idle or 12 hours total. Settings has a "Sign out everywhere" button.
+- Sessions are random tokens. The database stores only their hashes. The cookie is `__Host-`, HttpOnly, Secure and SameSite=Strict. A session expires after 2 hours idle or 12 hours total. With "Stay signed in" ticked it lasts 7 days idle or 30 days total. Settings has a "Sign out everywhere" button.
 - Failed sign-ins are limited to 5 per IP per 15 minutes and 25 per hour across all IPs.
 - State-changing API calls need a per-session CSRF token plus a same-origin check. The sign-in form uses a double-submit token.
 - Responses send `no-store`, `noindex`, a strict CSP (no inline scripts, no third-party scripts or fonts), `frame-ancestors 'none'` and HSTS.

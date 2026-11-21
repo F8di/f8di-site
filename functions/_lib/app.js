@@ -77,7 +77,7 @@ async function route(ctx, path, nonce) {
       if (!sameOrigin(request) || !csrfCookie || !safeEqual(String(form.get("csrf") || ""), csrfCookie)) {
         return loginPage(nonce, randomToken(18), "Your session expired. Try again.", 400);
       }
-      const result = await attemptLogin(env, db, request, { username: form.get("username"), password: form.get("password"), code: form.get("code") });
+      const result = await attemptLogin(env, db, request, { username: form.get("username"), password: form.get("password"), code: form.get("code"), remember: form.get("remember") === "1" });
       if (result.throttled) return loginPage(nonce, randomToken(18), "Too many attempts. Wait 15 minutes and try again.", 429);
       if (!result.ok) return loginPage(nonce, randomToken(18), "Invalid credentials.", 401);
       return redirect("/stats", [result.session.cookie, cookie(LOGIN_CSRF_COOKIE, "", { maxAge: 0 })]);
