@@ -33,7 +33,12 @@ function nearestBefore(rows, t) {
 export async function computeMetrics(db, { discoveryDays = 7 } = {}) {
   const t = now();
   const tracked = new Set(await trackedUniverseIds(db));
-  const games = await all(db, "SELECT universe_id, name, genre, genre_l1, created_at, last_seen_at, first_seen_at FROM games WHERE name IS NOT NULL AND (last_seen_at > ? OR last_collected_at > ?)", t - discoveryDays * DAY, t - 2 * DAY);
+  const games = await all(
+    db,
+    `SELECT universe_id, name, genre, genre_l1, created_at, last_seen_at, first_seen_at FROM games
+     WHERE name IS NOT NULL AND (last_seen_at > ? OR universe_id IN (SELECT li.target_id FROM list_items li JOIN lists l ON l.id = li.list_id WHERE l.kind = 'games'))`,
+    t - discoveryDays * DAY
+  );
   const pool = games.filter((g) => tracked.has(g.universe_id) || (g.last_seen_at || 0) > t - discoveryDays * DAY);
   const ids = new Set(pool.map((g) => g.universe_id));
   const hourly = await all(db, "SELECT universe_id, hour, samples, sum_playing, peak_playing, visits, favorites, up_votes, down_votes FROM game_hourly WHERE hour >= ?", t - 49 * HOUR);
@@ -140,6 +145,7 @@ export async function computeMetrics(db, { discoveryDays = 7 } = {}) {
   const stmts = [...metrics.values()].map((m) =>
     db.prepare("INSERT OR REPLACE INTO game_metrics (universe_id, computed_at, data) VALUES (?, ?, ?)").bind(m.universeId, t, JSON.stringify(m))
   );
+  stmts.push(db.prepare("DELETE FROM game_metrics WHERE computed_at < ?").bind(t)); // games that left the pool
   await batch(db, stmts);
   await setMeta(db, "genre_metrics", JSON.stringify({ computedAt: t, genres }));
   await setMeta(db, "metrics_computed_at", t);
