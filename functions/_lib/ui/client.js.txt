@@ -1,0 +1,826 @@
+"use strict";
+(() => {
+  const CSRF = document.querySelector('meta[name="csrf-token"]').content;
+  const $ = (s, r = document) => r.querySelector(s);
+  const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+  const view = $("#view");
+  const COLORS = ["#22d3ee", "#3b82f6", "#a78bfa", "#34d399", "#fbbf24", "#f87171", "#f472b6", "#94a3b8"];
+
+  // ---------- helpers ----------
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+  const isNum = (x) => typeof x === "number" && Number.isFinite(x);
+  const num = (x, d = 0) => (isNum(x) ? x.toLocaleString("en-US", { maximumFractionDigits: d }) : "–");
+  const compact = (x) => (isNum(x) ? Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(x) : "–");
+  const pct = (x, d = 1) => (isNum(x) ? `${x >= 0 ? "+" : ""}${(x * 100).toFixed(d)}%` : "–");
+  const pctPlain = (x, d = 1) => (isNum(x) ? `${(x * 100).toFixed(d)}%` : "–");
+  const cls = (x) => (!isNum(x) ? "flat" : x > 0.005 ? "up" : x < -0.005 ? "down" : "flat");
+  const delta = (x) => `<span class="${cls(x)}">${pct(x)}</span>`;
+  const dt = (ms) => (ms ? new Date(ms).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "–");
+  const day = (s) => (s ? new Date(s).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "–");
+  const ago = (ms) => {
+    if (!ms) return "never";
+    const s = (Date.now() - ms) / 1000;
+    if (s < 60) return "just now";
+    if (s < 3600) return `${Math.round(s / 60)}m ago`;
+    if (s < 86400) return `${Math.round(s / 3600)}h ago`;
+    return `${Math.round(s / 86400)}d ago`;
+  };
+  const conf = (c) => `<span class="conf" title="Confidence ${isNum(c) ? c.toFixed(2) : "–"}"><i data-w="${Math.round((c || 0) * 100)}"></i></span>`;
+  const pattern = (p) => `<span class="pill ${esc((p || "").split(" ")[0])}">${esc(p || "–")}</span>`;
+  const icon = (url) => (url ? `<img class="icon" src="${esc(url)}" alt="" loading="lazy">` : `<span class="icon"></span>`);
+  const gameLink = (r) => `<span class="name">${icon(r.icon)}<a href="#/game/${r.universeId}">${esc(r.name || `Universe ${r.universeId}`)}</a></span>`;
+
+  function applyDynamic(root = document) {
+    for (const el of $$("[data-w]", root)) el.style.width = `${Math.max(0, Math.min(100, Number(el.dataset.w)))}%`;
+    for (const el of $$("[data-bg]", root)) el.style.background = el.dataset.bg;
+  }
+
+  function toast(msg, err = false) {
+    const t = $("#toast");
+    t.textContent = msg;
+    t.className = `toast${err ? " err" : ""}`;
+    t.hidden = false;
+    clearTimeout(toast.t);
+    toast.t = setTimeout(() => (t.hidden = true), 4000);
+  }
+
+  async function api(path, { method = "GET", body } = {}) {
+    const res = await fetch(`/stats/api/${path}`, {
+      method,
+      headers: { "X-CSRF-Token": CSRF, ...(body ? { "Content-Type": "application/json" } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+      credentials: "same-origin",
+    });
+    if (res.status === 401) {
+      location.href = "/stats/login";
+      throw new Error("Signed out");
+    }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    return data;
+  }
+
+  const html = (s) => {
+    const t = document.createElement("template");
+    t.innerHTML = s.trim();
+    return t.content.firstElementChild;
+  };
+
+  // ---------- range ----------
+  const state = { range: localStorage.getItem("stats.range") || "7d", from: "", to: "", exp: localStorage.getItem("stats.exp") || "" };
+  const rangeQS = () => (state.range === "custom" && state.from && state.to ? `from=${encodeURIComponent(state.from)}&to=${encodeURIComponent(state.to + "T23:59:59Z")}` : `range=${state.range === "custom" ? "7d" : state.range}`);
+  function drawRange() {
+    const r = $("#range");
+    r.innerHTML = ["24h", "7d", "30d", "90d"].map((k) => `<button data-r="${k}" class="${state.range === k ? "on" : ""}">${k}</button>`).join("") + `<input type="date" id="rf" title="From" value="${esc(state.from)}"><input type="date" id="rt" title="To" value="${esc(state.to)}">`;
+    $$("button", r).forEach((b) => (b.onclick = () => { state.range = b.dataset.r; localStorage.setItem("stats.range", state.range); drawRange(); render(); }));
+    const onDate = () => { state.from = $("#rf").value; state.to = $("#rt").value; if (state.from && state.to) { state.range = "custom"; drawRange(); render(); } };
+    $("#rf").onchange = onDate;
+    $("#rt").onchange = onDate;
+  }
+
+  // ---------- table ----------
+  function table(cols, rows, opts = {}) {
+    const wrap = html(`<div><div class="row"><input class="in tf" placeholder="Filter…"><span class="spacer"></span><span class="muted small cnt"></span><button class="btn ghost sm csv">Export CSV</button></div><div class="table-wrap section"><table><thead><tr>${cols.map((c) => `<th class="${c.num ? "num" : ""}" data-k="${esc(c.k)}">${esc(c.label)}</th>`).join("")}</tr></thead><tbody></tbody></table></div></div>`);
+    if (opts.noTools) wrap.firstElementChild.hidden = true;
+    let sortK = opts.sort ?? null;
+    let dir = opts.dir ?? -1;
+    let filter = "";
+    let shown = [];
+    const val = (c, r) => (c.sort ? c.sort(r) : r[c.k]);
+    const text = (c, r) => (c.text ? c.text(r) : val(c, r));
+    const draw = () => {
+      shown = rows.filter((r) => !filter || cols.some((c) => String(text(c, r) ?? "").toLowerCase().includes(filter)));
+      if (sortK) {
+        const c = cols.find((x) => x.k === sortK);
+        shown.sort((a, b) => {
+          const x = val(c, a);
+          const y = val(c, b);
+          if (x === null || x === undefined || Number.isNaN(x)) return 1;
+          if (y === null || y === undefined || Number.isNaN(y)) return -1;
+          return (x > y ? 1 : x < y ? -1 : 0) * dir;
+        });
+      }
+      const limit = opts.limit || 500;
+      $("tbody", wrap).innerHTML = shown.length
+        ? shown.slice(0, limit).map((r) => `<tr>${cols.map((c) => `<td class="${c.num ? "num" : ""}">${c.fmt ? c.fmt(r[c.k], r) : esc(r[c.k] ?? "–")}</td>`).join("")}</tr>`).join("")
+        : `<tr><td colspan="${cols.length}" class="muted">${esc(opts.empty || "No data yet.")}</td></tr>`;
+      $(".cnt", wrap).textContent = `${shown.length} row${shown.length === 1 ? "" : "s"}${shown.length > limit ? ` (showing ${limit})` : ""}`;
+      $$("th", wrap).forEach((th) => th.classList.toggle("sorted", th.dataset.k === sortK));
+      $$("th", wrap).forEach((th) => th.classList.toggle("asc", th.dataset.k === sortK && dir === 1));
+      applyDynamic(wrap);
+      if (opts.after) opts.after(wrap, shown);
+    };
+    $$("th", wrap).forEach((th) => (th.onclick = () => { if (sortK === th.dataset.k) dir = -dir; else { sortK = th.dataset.k; dir = -1; } draw(); }));
+    $(".tf", wrap).oninput = (e) => { filter = e.target.value.toLowerCase(); draw(); };
+    $(".csv", wrap).onclick = () => {
+      const q = (v) => { let s = String(v ?? ""); if (/^[=+\-@]/.test(s)) s = `'${s}`; return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+      const csv = [cols.map((c) => q(c.label)).join(","), ...shown.map((r) => cols.map((c) => q(text(c, r))).join(","))].join("\n");
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+      a.download = `${opts.name || "export"}.csv`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    };
+    draw();
+    return wrap;
+  }
+
+  // ---------- charts ----------
+  const tip = $("#tooltip");
+  function lineChart(series, { height = 220, yFmt = compact, xFmt = dt, empty = "Not enough data yet. Charts fill in as snapshots are collected." } = {}) {
+    const box = html(`<div class="chart"></div>`);
+    const pts = series.flatMap((s) => s.points.filter((p) => isNum(p.v)));
+    if (pts.length < 2) {
+      box.innerHTML = `<div class="empty">${esc(empty)}</div>`;
+      return box;
+    }
+    const W = 800, H = height, L = 52, R = 10, T = 10, B = 24;
+    const xs = pts.map((p) => p.t), ys = pts.map((p) => p.v);
+    const x0 = Math.min(...xs), x1 = Math.max(...xs);
+    let y0 = Math.min(...ys), y1 = Math.max(...ys);
+    if (y0 === y1) { y0 -= 1; y1 += 1; }
+    const pad = (y1 - y0) * 0.08;
+    y0 = y0 >= 0 ? Math.max(0, y0 - pad) : y0 - pad;
+    y1 += pad;
+    const X = (t) => L + ((t - x0) / Math.max(x1 - x0, 1)) * (W - L - R);
+    const Y = (v) => T + (1 - (v - y0) / (y1 - y0)) * (H - T - B);
+    let svg = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" height="${H}">`;
+    for (let i = 0; i <= 4; i++) {
+      const v = y0 + ((y1 - y0) * i) / 4;
+      svg += `<line class="grid-line" x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}"/><text x="${L - 6}" y="${Y(v) + 3}" text-anchor="end">${esc(yFmt(v))}</text>`;
+    }
+    const span = x1 - x0;
+    const ticks = span <= 0 ? [x0] : [0, 1, 2, 3, 4].map((i) => x0 + (span * i) / 4);
+    const tickFmt = (t) => (span < 2 * 864e5 ? new Date(t).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }) : new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" }));
+    ticks.forEach((t, i) => {
+      svg += `<text x="${X(t)}" y="${H - 6}" text-anchor="${ticks.length === 1 ? "middle" : i === 0 ? "start" : i === ticks.length - 1 ? "end" : "middle"}">${esc(tickFmt(t))}</text>`;
+    });
+    series.forEach((s, i) => {
+      const p = s.points.filter((q) => isNum(q.v)).sort((a, b) => a.t - b.t);
+      if (!p.length) return;
+      const color = s.color || COLORS[i % COLORS.length];
+      const d = p.map((q, j) => `${j ? "L" : "M"}${X(q.t).toFixed(1)},${Y(q.v).toFixed(1)}`).join("");
+      if (series.length === 1) svg += `<path class="area" fill="${color}" d="${d}L${X(p[p.length - 1].t)},${Y(y0)}L${X(p[0].t)},${Y(y0)}Z"/>`;
+      svg += `<path class="line" stroke="${color}" d="${d}"/>`;
+    });
+    svg += `<line class="hover-line" x1="0" x2="0" y1="${T}" y2="${H - B}" visibility="hidden"/></svg>`;
+    box.innerHTML = svg + (series.length > 1 ? `<div class="legend">${series.map((s, i) => `<span><i data-bg="${s.color || COLORS[i % COLORS.length]}"></i>${esc(s.name)}</span>`).join("")}</div>` : "");
+    applyDynamic(box);
+    const el = $("svg", box), hl = $(".hover-line", box);
+    el.addEventListener("mousemove", (e) => {
+      const rect = el.getBoundingClientRect();
+      const t = x0 + (((e.clientX - rect.left) / rect.width) * W - L) / (W - L - R) * (x1 - x0);
+      const rows = series.map((s, i) => {
+        let best = null;
+        for (const q of s.points) if (isNum(q.v) && (!best || Math.abs(q.t - t) < Math.abs(best.t - t))) best = q;
+        return best ? { s, i, q: best } : null;
+      }).filter(Boolean);
+      if (!rows.length) return;
+      hl.setAttribute("x1", X(rows[0].q.t)); hl.setAttribute("x2", X(rows[0].q.t)); hl.setAttribute("visibility", "visible");
+      tip.innerHTML = `<div class="muted small">${esc(xFmt(rows[0].q.t))}</div>` + rows.map((r) => `<div><span class="${r.i ? "" : ""}">${esc(r.s.name || "value")}</span>: <b>${esc(yFmt(r.q.v))}</b></div>`).join("");
+      tip.hidden = false;
+      tip.style.left = `${Math.min(e.clientX + 14, innerWidth - 290)}px`;
+      tip.style.top = `${e.clientY + 14}px`;
+    });
+    el.addEventListener("mouseleave", () => { tip.hidden = true; hl.setAttribute("visibility", "hidden"); });
+    return box;
+  }
+
+  function bars(items, fmt = compact) {
+    if (!items.length) return html(`<div class="empty">No data yet.</div>`);
+    const max = Math.max(...items.map((i) => Math.abs(i.value) || 0), 1);
+    const box = html(`<div class="bars">${items.map((i) => `<div class="bar"><span class="lbl" title="${esc(i.label)}">${esc(i.label)}</span><span class="track"><span class="fill" data-w="${(Math.abs(i.value) / max) * 100}"></span></span><span class="val">${esc(fmt(i.value))}</span></div>`).join("")}</div>`);
+    applyDynamic(box);
+    return box;
+  }
+
+  const card = (title, content, extra = "") => {
+    const c = html(`<div class="card"><h2><span>${esc(title)}</span>${extra}</h2></div>`);
+    if (typeof content === "string") c.insertAdjacentHTML("beforeend", content);
+    else if (content) c.append(content);
+    return c;
+  };
+  const kpi = (label, value, d) => `<div class="card kpi"><div class="l">${esc(label)}</div><div class="v">${value}</div>${d !== undefined ? `<div class="d">${d}</div>` : ""}</div>`;
+  const grid = (cls, children) => {
+    const g = html(`<div class="grid ${cls} section"></div>`);
+    for (const c of children) typeof c === "string" ? g.insertAdjacentHTML("beforeend", c) : g.append(c);
+    return g;
+  };
+
+  const GAME_COLS = [
+    { k: "name", label: "Game", fmt: (_, r) => gameLink(r), text: (r) => r.name },
+    { k: "current", label: "Players", num: true, fmt: (v) => num(v) },
+    { k: "avg24", label: "Avg 24h", num: true, fmt: (v) => num(v) },
+    { k: "growth24", label: "24h", num: true, fmt: delta },
+    { k: "growth7", label: "7d", num: true, fmt: delta },
+    { k: "acceleration", label: "Accel.", num: true, fmt: delta },
+    { k: "baselineRatio", label: "vs base", num: true, fmt: (v) => (isNum(v) ? `${v.toFixed(2)}x` : "–") },
+    { k: "visitsPerHour", label: "Visits/h", num: true, fmt: (v) => compact(v) },
+    { k: "genre", label: "Genre" },
+    { k: "pattern", label: "Pattern", fmt: pattern },
+    { k: "opportunity", label: "Opp.", num: true, fmt: (v) => num(v) },
+    { k: "confidence", label: "Conf.", num: true, fmt: conf },
+  ];
+
+  async function lists(kind) {
+    const r = await api("lists");
+    return r.lists.filter((l) => !kind || l.kind === kind);
+  }
+
+  // ---------- views ----------
+  const VIEWS = {};
+
+  VIEWS.overview = async () => {
+    const d = await api("overview");
+    const q = d.queue;
+    const poolNow = d.poolSeries.length ? d.poolSeries[d.poolSeries.length - 1].playing : null;
+    const root = html(`<div></div>`);
+    root.append(grid("g6", [
+      kpi("Games observed", num(d.counts.games)),
+      kpi("Tracked games", num(d.counts.tracked)),
+      kpi("Players across pool", compact(poolNow), `<span class="muted">${num(d.poolSeries.length ? d.poolSeries[d.poolSeries.length - 1].games : 0)} games, latest hour</span>`),
+      kpi("Watched items", num(d.counts.items)),
+      kpi("Open alerts", num(d.counts.openAlerts)),
+      kpi("Last collection", esc(ago(q.lastTickAt)), `<span class="${q.errors24h.length ? "down" : "muted"}">${q.errors24h.reduce((s, e) => s + e.n, 0)} errors in 24h</span>`),
+    ]));
+    root.append(grid("g2", [
+      card("Concurrent players across observed pool (7d, hourly)", lineChart([{ name: "Players", points: d.poolSeries.map((p) => ({ t: p.ts, v: p.playing })) }])),
+      card("Fastest growing (24h)", table(GAME_COLS.filter((c) => ["name", "current", "growth24", "confidence"].includes(c.k)), d.leaderboards.fastestGrowing, { noTools: true, empty: "Needs about 24h of snapshots to rank growth." })),
+    ]));
+    root.append(grid("g3", [
+      card("Unexpected breakouts", table(GAME_COLS.filter((c) => ["name", "current", "baselineRatio"].includes(c.k)), d.leaderboards.unexpectedBreakouts, { noTools: true, empty: "Needs several days of history." })),
+      card("Biggest declines", table(GAME_COLS.filter((c) => ["name", "current", "growth24"].includes(c.k)), d.leaderboards.biggestDeclines, { noTools: true })),
+      card("New releases (< 30 days)", table(GAME_COLS.filter((c) => ["name", "current", "genre"].includes(c.k)), d.leaderboards.newReleases, { noTools: true })),
+    ]));
+    root.append(grid("g1", [card("Tracked games", table(GAME_COLS, d.tracked, { name: "tracked", empty: "Track games from Game Explorer to see them here." }))]));
+    root.append(grid("g2", [
+      card("Major changes", d.events.length ? `<ul class="clean">${d.events.map((e) => `<li><a href="#/game/${e.universe_id}">${esc(e.name)}</a> · ${esc(e.summary)} <span class="muted small">${esc(ago(e.ts))}</span></li>`).join("")}</ul>` : `<div class="empty">No major changes detected on tracked games yet.</div>`),
+      card("Alerts", d.alerts.length ? `<ul class="clean">${d.alerts.map((a) => `<li>${esc(a.message)} <span class="muted small">${esc(ago(a.ts))}</span></li>`).join("")}</ul>` : `<div class="empty">No open alerts.</div>`, `<a class="small" href="#/alerts">Manage</a>`),
+    ]));
+    root.append(grid("g1", [card("Collection status", collectionStatus(q, d.sorts))]));
+    return root;
+  };
+
+  function collectionStatus(q, sorts) {
+    const types = ["collect_games", "discover", "rollup", "collect_items", "item_resale", "report", "cleanup"];
+    return `<div class="grid g4">${types.map((t) => `<div><div class="muted small">${esc(t.replace("_", " "))}</div><div>${esc(ago(q.lastOk[t]))}</div></div>`).join("")}</div>
+      ${q.errors24h.length ? `<div class="section">${q.errors24h.map((e) => `<div class="down small">${esc(e.job_type)}: ${e.n} failure(s). Latest: ${esc(e.sample)}</div>`).join("")}</div>` : `<div class="section muted small">No collection errors in the last 24 hours.</div>`}
+      <div class="section muted small">Queue: ${Object.entries(q.counts).map(([k, v]) => `${esc(k)} ${v}`).join(" · ") || "empty"}${sorts?.length ? ` · Discovery sorts: ${sorts.map((s) => esc(s.name)).join(", ")}` : ""}</div>`;
+  }
+
+  VIEWS.trends = async (tab = "fastestGrowing") => {
+    const d = await api("trends?limit=50");
+    const TABS = { fastestGrowing: "Fastest growing", emerging: "Emerging", newReleases: "New releases", newlyDiscovered: "Newly discovered", biggestDeclines: "Biggest declines", mostConsistent: "Most consistent", unexpectedBreakouts: "Unexpected breakouts", acceleration: "Accelerating", opportunities: "Opportunity score", trendingGenres: "Trending genres" };
+    const root = html(`<div><div class="tabs">${Object.entries(TABS).map(([k, v]) => `<button data-t="${k}" class="${k === tab ? "on" : ""}">${esc(v)}</button>`).join("")}</div></div>`);
+    $$(".tabs button", root).forEach((b) => (b.onclick = () => (location.hash = `#/trends/${b.dataset.t}`)));
+    if (tab === "trendingGenres") root.append(table(GENRE_COLS, d.trendingGenres, { name: "trending-genres" }));
+    else root.append(table(GAME_COLS, d[tab] || [], { name: tab, sort: ["fastestGrowing", "biggestDeclines", "mostConsistent", "unexpectedBreakouts"].includes(tab) ? null : undefined, empty: "Not enough history to rank yet. Rankings need roughly 24 hours (growth) to 7 days (baselines, consistency) of snapshots." }));
+    root.append(card("How rankings work", `<div class="small muted">
+      <p><b>Growth</b> compares average concurrent players in the last 24h against the 24h before (denominator floored at 20 players). <b>Acceleration</b> is yesterday's day-over-day growth minus the previous day's. <b>vs base</b> is current players divided by the median daily average of the previous 7 days. Breakouts need 2.5x baseline or a 3-sigma deviation.</p>
+      <p class="section"><b>Sustained growth</b> requires 24h growth over 25%, 7-day growth over 15% and rising daily averages on at least 60% of the last 14 days; otherwise a jump is labelled a <b>spike</b>. Total visits are lifetime counters and are never used as player activity; visits/hour is shown separately.</p>
+      <p class="section"><b>Confidence</b> (0-1) combines sample coverage over 48h, days of history, and player volume. Pool: ${num(d.poolSize)} games, computed ${esc(ago(d.computedAt))}.</p></div>`));
+    return root;
+  };
+
+  const GENRE_COLS = [
+    { k: "genre", label: "Genre" },
+    { k: "games", label: "Games", num: true },
+    { k: "playing", label: "Players", num: true, fmt: (v) => num(v) },
+    { k: "growth24", label: "24h", num: true, fmt: delta },
+    { k: "growth7", label: "7d", num: true, fmt: delta },
+    { k: "growingGames", label: "Growing", num: true },
+    { k: "topShare", label: "Top game share", num: true, fmt: (v) => pctPlain(v, 0) },
+    { k: "hhi", label: "HHI", num: true, fmt: (v) => (isNum(v) ? v.toFixed(2) : "–") },
+    { k: "newGameShare", label: "New-game share", num: true, fmt: (v) => pctPlain(v, 0) },
+    { k: "confidence", label: "Conf.", num: true, fmt: conf },
+  ];
+
+  async function listPicker(kind) {
+    const ls = await lists(kind);
+    return `<select class="in lp">${ls.map((l) => `<option value="${l.id}">${esc(l.name)}</option>`).join("")}</select>`;
+  }
+
+  VIEWS.explorer = async () => {
+    const root = html(`<div></div>`);
+    const picker = await listPicker("games");
+    const searchCard = card("Search Roblox games", `<div class="row"><input class="in" id="q" placeholder="Search by name, or paste a roblox.com/games URL, place id, or u:<universe id>" maxlength="100"><span class="muted small">Add to</span>${picker}<button class="btn" id="go">Search</button><button class="btn ghost" id="addref">Add by ID/URL</button></div><div id="results" class="section"></div>`);
+    root.append(searchCard);
+    const run = async () => {
+      const q = $("#q", root).value.trim();
+      if (!q) return;
+      $("#results", root).innerHTML = `<div class="loading">Searching…</div>`;
+      try {
+        const r = await api(`search?q=${encodeURIComponent(q)}`);
+        const res = $("#results", root);
+        res.innerHTML = "";
+        res.append(table([
+          { k: "name", label: "Game", fmt: (v, r) => `${esc(v)} <span class="muted small">${r.universeId}</span>` },
+          { k: "playing", label: "Players now", num: true, fmt: (v) => num(v) },
+          { k: "upVotes", label: "Like ratio", num: true, sort: (r) => r.upVotes / Math.max(1, r.upVotes + r.downVotes), fmt: (v, r) => pctPlain(r.upVotes / Math.max(1, r.upVotes + r.downVotes), 0) },
+          { k: "universeId", label: "", fmt: (v, r) => (r.tracked ? `<a href="#/game/${v}">Open</a>` : `<button class="btn sm add" data-id="${v}">Track</button>`) },
+        ], r.results, { noTools: true, empty: "No games found.", after: (w) => $$(".add", w).forEach((b) => (b.onclick = () => track(`u:${b.dataset.id}`, b))) }));
+      } catch (e) { $("#results", root).innerHTML = `<div class="empty down">${esc(e.message)}</div>`; }
+    };
+    const track = async (ref, btn) => {
+      if (btn) btn.disabled = true;
+      try {
+        const r = await api("games", { method: "POST", body: { ref, listId: $(".lp", root).value } });
+        toast(`Tracking universe ${r.universeId}. First snapshot is being collected.`);
+        if (btn) btn.outerHTML = `<a href="#/game/${r.universeId}">Open</a>`;
+      } catch (e) { toast(e.message, true); if (btn) btn.disabled = false; }
+    };
+    $("#go", root).onclick = run;
+    $("#q", root).onkeydown = (e) => e.key === "Enter" && run();
+    $("#addref", root).onclick = () => { const v = $("#q", root).value.trim(); if (v) track(v); };
+    const all = await api("games");
+    root.append(grid("g1", [card(`Observed games (${all.games.length})`, table(GAME_COLS, all.games, { name: "observed-games", sort: "current", empty: "Discovery runs every 30 minutes and fills this table." }))]));
+    return root;
+  };
+
+  VIEWS.game = async (id) => {
+    const d = await api(`games/${id}?${rangeQS()}`);
+    const g = d.game, m = d.metrics || {};
+    const likes = (g.up_votes ?? null);
+    const latest = d.series[d.series.length - 1] || {};
+    const votes = (latest.up_votes || 0) + (latest.down_votes || 0);
+    const root = html(`<div></div>`);
+    const picker = await listPicker("games");
+    root.append(html(`<div class="card"><div class="row">${icon(g.icon_url).replace('class="icon"', 'class="icon" width="56" height="56"')}<div><h3>${esc(g.name)}</h3><div class="muted small">by ${esc(g.creator_name || "?")} (${esc(g.creator_type || "")}) · ${esc(g.genre_l1 || g.genre || "")}${g.genre_l2 ? ` / ${esc(g.genre_l2)}` : ""} · universe ${g.universe_id} · <a href="https://www.roblox.com/games/${g.root_place_id}" target="_blank" rel="noopener noreferrer">Roblox page</a></div><div class="muted small">Created ${esc(day(g.created_at))} · Updated ${esc(day(g.updated_at))} · First observed ${esc(dt(g.first_seen_at))} · In lists: ${d.lists.map((l) => esc(l.name)).join(", ") || "none"}</div></div><span class="spacer"></span>${picker}<button class="btn sm" id="addlist">Add to list</button><button class="btn ghost sm" id="rep">Competitor report</button></div></div>`));
+    $("#addlist", root).onclick = async () => { try { await api(`lists/${$(".lp", root).value}/items`, { method: "POST", body: { targetId: g.universe_id } }); toast("Added."); } catch (e) { toast(e.message, true); } };
+    $("#rep", root).onclick = async () => { try { const r = await api("reports", { method: "POST", body: { type: "competitor", options: { universeId: g.universe_id } } }); location.hash = `#/report/${r.id}`; } catch (e) { toast(e.message, true); } };
+    root.append(grid("g6", [
+      kpi("Concurrent players", num(m.current ?? latest.playing), `<span class="muted">${m.avg24 ? `avg 24h ${num(m.avg24)}` : ""}</span>`),
+      kpi("Peak observed", num(Math.max(g.peak_playing || 0, m.peakObserved || 0)), `<span class="muted">${esc(dt(g.peak_playing_at))}</span>`),
+      kpi("24h / 7d growth", `${delta(m.growth24)} <span class="muted">/</span> ${delta(m.growth7)}`, m.pattern ? pattern(m.pattern) : ""),
+      kpi("Total visits (lifetime)", compact(latest.visits ?? m.visits), `<span class="muted">${isNum(m.visitsPerHour) ? `+${compact(m.visitsPerHour)}/hour` : ""}</span>`),
+      kpi("Favorites", compact(latest.favorites ?? m.favorites), `<span class="muted">${isNum(m.favPerHour) ? `+${compact(m.favPerHour)}/hour` : ""}</span>`),
+      kpi("Likes / dislikes", votes ? pctPlain(latest.up_votes / votes, 1) : "–", `<span class="muted">${compact(latest.up_votes)} / ${compact(latest.down_votes)}</span>`),
+    ]));
+    const ch = d.changes;
+    root.append(grid("g3", ["day", "week", "month"].map((k) => kpi(`${k === "day" ? "Daily" : k === "week" ? "Weekly" : "Monthly"} change (avg players)`, ch[k] ? delta(ch[k].players) : "–", ch[k] ? `<span class="muted">visits +${compact(ch[k].visits)} · favorites +${compact(ch[k].favorites)}</span>` : `<span class="muted">needs ${k === "day" ? 2 : k === "week" ? 8 : 31} days of history</span>`))));
+    root.append(grid("g1", [card(`Concurrent players (${d.resolution})`, lineChart([{ name: "Players", points: d.series.map((p) => ({ t: p.ts, v: p.playing })) }, ...(d.series[0] && "peak" in d.series[0] ? [{ name: "Peak", color: "#3b82f6", points: d.series.map((p) => ({ t: p.ts, v: p.peak })) }] : [])], { height: 260 }))]));
+    const growth = (k) => d.series.slice(1).map((p, i) => ({ t: p.ts, v: isNum(p[k]) && isNum(d.series[i][k]) ? (p[k] - d.series[i][k]) / Math.max((p.ts - d.series[i].ts) / 3600e3, 0.01) : null }));
+    root.append(grid("g2", [
+      card("Visit growth (visits per hour)", lineChart([{ name: "Visits/hour", points: growth("visits") }])),
+      card("Favorite growth (favorites per hour)", lineChart([{ name: "Favorites/hour", color: "#a78bfa", points: growth("favorites") }])),
+    ]));
+    root.append(grid("g2", [
+      card("Update timeline", d.updates.length ? `<ul class="clean">${d.updates.map((u) => `<li>Roblox "updated" moved to <b>${esc(day(u.new_value))}</b> <span class="muted small">(observed ${esc(dt(u.ts))})</span></li>`).join("")}${d.nameChanges.map((c) => `<li>Renamed "${esc(c.old_value)}" → "${esc(c.new_value)}" <span class="muted small">${esc(dt(c.ts))}</span></li>`).join("")}</ul>` : `<div class="empty">No updates observed since tracking started. Last Roblox update: ${esc(day(g.updated_at))}.</div>`),
+      card("Discovery placements", d.sightings.length ? table([{ k: "sort_id", label: "Sort" }, { k: "best_position", label: "Best pos.", num: true }, { k: "last_position", label: "Last pos.", num: true }, { k: "first_ts", label: "First seen", fmt: dt }, { k: "last_ts", label: "Last seen", fmt: ago }], d.sightings, { noTools: true }) : `<div class="empty">Not seen in Roblox discovery sorts.</div>`),
+    ]));
+    root.append(grid("g1", [card("Major changes and investigation", d.events.length ? d.events.map(eventHtml).join("") : `<div class="empty">No major changes detected. Investigations run automatically for tracked games when activity moves sharply.</div>`)]));
+    root.append(grid("g1", [card("Daily history", table([{ k: "day", label: "Day" }, { k: "avg_playing", label: "Avg players", num: true, fmt: (v) => num(v) }, { k: "peak_playing", label: "Peak", num: true, fmt: (v) => num(v) }, { k: "visits", label: "Visits", num: true, fmt: (v) => num(v) }, { k: "favorites", label: "Favorites", num: true, fmt: (v) => num(v) }], d.daily, { name: `game-${id}-daily`, sort: "day" }))]));
+    root.append(grid("g1", [alertForm("game", g.universe_id, g.name)]));
+    return root;
+  };
+
+  const eventHtml = (e) => `<div class="section"><div><b>${esc(e.summary)}</b> <span class="pill">${esc(e.severity)}</span> <span class="muted small">${esc(dt(e.ts))}</span></div>
+    ${e.evidence ? `<div class="evidence"><div class="tag">Observed</div>${e.evidence.observed.map((o) => `<div>${esc(o)}</div>`).join("")}</div><div class="evidence inferred"><div class="tag">${esc(e.evidence.inferredLabel || "Inferred (speculative)")}</div>${e.evidence.inferred.map((o) => `<div>${esc(o)}</div>`).join("")}</div>` : ""}</div>`;
+
+  function alertForm(type, targetId, name) {
+    const metrics = type === "game" ? { playing_above: "Players at or above", playing_below: "Players at or below", growth_24h_above: "24h growth at or above (%)", growth_24h_below: "24h change at or below (%)" } : { price_below: "Lowest resale at or below (R$)", price_above: "Lowest resale at or above (R$)", change_24h_abs_above: "24h price move at least (%)", unusual_move: "Statistically unusual move (3 sigma)" };
+    const c = card(`Create alert for ${name}`, `<div class="row"><select class="in m">${Object.entries(metrics).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join("")}</select><input class="in th" type="number" step="any" placeholder="Threshold"><input class="in cd" type="number" value="360" title="Cooldown minutes"><span class="muted small">min cooldown</span><button class="btn sm">Create alert</button></div>`);
+    $("button", c).onclick = async () => {
+      try { await api("alerts/rules", { method: "POST", body: { targetType: type, targetId, metric: $(".m", c).value, threshold: Number($(".th", c).value || 0), cooldownMinutes: Number($(".cd", c).value) } }); toast("Alert created."); } catch (e) { toast(e.message, true); }
+    };
+    return c;
+  }
+
+  VIEWS.competitors = async () => {
+    const ls = await lists("games");
+    const comp = ls.find((l) => l.name === "Competitors");
+    const root = html(`<div></div>`);
+    if (!comp) return html(`<div class="empty">Create a games list named "Competitors" in Watchlists.</div>`);
+    const g = await api(`games?list=${comp.id}`);
+    root.append(card("Add competitor", `<div class="row"><input class="in" id="ref" placeholder="roblox.com/games URL, place id, or u:<universe id>"><button class="btn" id="add">Add</button><span class="spacer"></span><button class="btn ghost" id="rep">Generate competitor report</button></div>`));
+    $("#add", root).onclick = async () => { try { await api(`lists/${comp.id}/items`, { method: "POST", body: { ref: $("#ref", root).value.trim() } }); toast("Added. Collecting first snapshot."); render(); } catch (e) { toast(e.message, true); } };
+    $("#rep", root).onclick = async () => { try { const r = await api("reports", { method: "POST", body: { type: "competitor" } }); location.hash = `#/report/${r.id}`; } catch (e) { toast(e.message, true); } };
+    const ids = g.games.map((x) => x.universeId);
+    const total = g.games.reduce((s, x) => s + (x.current || 0), 0);
+    if (ids.length) {
+      const cmp = await api(`compare?ids=${ids.join(",")}&${rangeQS()}`);
+      root.append(grid("g1", [card("Historical player activity", lineChart(cmp.series.map((s) => ({ name: s.name, points: s.series.map((p) => ({ t: p.ts, v: p.playing })) })), { height: 280 }))]));
+      root.append(grid("g2", [
+        card("Market share (current players)", bars(g.games.filter((x) => x.current).sort((a, b) => b.current - a.current).map((x) => ({ label: x.name, value: x.current })))),
+        card("Growth comparison (24h)", bars(g.games.filter((x) => isNum(x.growth24)).sort((a, b) => b.growth24 - a.growth24).map((x) => ({ label: x.name, value: x.growth24 })), (v) => pct(v))),
+      ]));
+    }
+    root.append(grid("g1", [card("Competitors", table([...GAME_COLS.slice(0, 5), { k: "share", label: "Share", num: true, sort: (r) => (r.current || 0) / Math.max(total, 1), fmt: (_, r) => pctPlain((r.current || 0) / Math.max(total, 1)) }, { k: "likeRatio", label: "Like ratio", num: true, fmt: (v) => pctPlain(v) }, ...GAME_COLS.slice(8), { k: "universeId", label: "", fmt: (v) => `<button class="btn ghost sm rm" data-id="${v}">Remove</button>` }], g.games, { name: "competitors", empty: "No competitors yet.", after: (w) => $$(".rm", w).forEach((b) => (b.onclick = async () => { await api(`lists/${comp.id}/items/${b.dataset.id}`, { method: "DELETE" }); render(); })) }))]));
+    return root;
+  };
+
+  VIEWS.genres = async () => {
+    const d = await api("genres");
+    const root = html(`<div></div>`);
+    const top = d.genres.slice(0, 6).map((g) => g.genre);
+    const byGenre = new Map(top.map((g) => [g, []]));
+    for (const r of d.series) if (byGenre.has(r.genre)) byGenre.get(r.genre).push({ t: Date.parse(r.day), v: r.playing });
+    root.append(grid("g2", [
+      card("Players by genre (latest)", bars(d.genres.slice(0, 12).map((g) => ({ label: g.genre, value: g.playing })))),
+      card("Genre momentum (24h)", bars(d.genres.filter((g) => isNum(g.growth24)).sort((a, b) => b.growth24 - a.growth24).slice(0, 12).map((g) => ({ label: g.genre, value: g.growth24 })), (v) => pct(v))),
+    ]));
+    root.append(grid("g1", [card("Genre performance over time (daily avg players, top 6)", lineChart([...byGenre].map(([name, points]) => ({ name, points })), { height: 260, empty: "Daily genre history appears after the first full day of collection." }))]));
+    root.append(grid("g1", [card(`All genres · computed ${ago(d.computedAt)}`, table(GENRE_COLS, d.genres, { name: "genres", sort: "playing" }))]));
+    root.append(html(`<p class="muted small section">HHI (Herfindahl index) measures concentration: near 1 means one game dominates the genre, near 0 means players are spread across many games. New-game share is the share of players in games created within 90 days.</p>`));
+    return root;
+  };
+
+  VIEWS.opportunities = async () => {
+    const d = await api("opportunities");
+    const root = html(`<div></div>`);
+    root.append(html(`<div class="banner">Concepts below are generated from observed statistics. They are suggestions, not forecasts; historical observations and generated ideas are kept separate.</div>`));
+    root.append(grid("g2", d.concepts.map((c) => html(`<div class="concept"><div class="row"><h3>${esc(c.title)}</h3><span class="spacer"></span><span class="pill">confidence ${c.confidence}</span></div>
+      <div class="small"><b>Target genre:</b> ${esc(c.genre)}${c.pattern ? ` · <b>pattern:</b> ${esc(c.pattern)}` : ""}</div>
+      <div class="evidence section"><div class="tag">Supporting statistics (observed)</div><div>${esc(c.explanation)}</div><div class="muted small">Players ${num(c.stats.players)} · 24h ${pct(c.stats.growth24)} · 7d ${pct(c.stats.growth7)} · top game share ${pctPlain(c.stats.topShare, 0)} · HHI ${c.stats.hhi}</div></div>
+      <div class="small section"><b>Competing games:</b> ${c.competitors.map((x) => `<a href="#/game/${x.universeId}">${esc(x.name)}</a> (${num(x.current)}, ${pct(x.growth24)})`).join(", ")}</div>
+      <div class="small"><b>Development complexity:</b> ${esc(c.complexity)} · <b>Monetization model:</b> ${esc(c.monetization)}</div>
+      <div class="evidence inferred section"><div class="tag">Risks</div>${c.risks.map((r) => `<div>${esc(r)}</div>`).join("") || "<div>None flagged by the data.</div>"}</div>
+      <div class="muted small">${esc(c.label)}</div></div>`))));
+    if (!d.concepts.length) root.append(html(`<div class="empty section">Needs genres with at least 3 observed games and some history.</div>`));
+    root.append(grid("g1", [card("Genre opportunity scores", table([{ k: "genre", label: "Genre" }, { k: "score", label: "Score", num: true }, ...GENRE_COLS.slice(1)], d.genres, { name: "genre-opportunities", sort: "score" }))]));
+    root.append(grid("g1", [card("Rising title patterns (game design signals)", table([{ k: "pattern", label: "Pattern" }, { k: "games", label: "Games", num: true }, { k: "playing", label: "Players", num: true, fmt: (v) => num(v) }, { k: "avgGrowth24", label: "Avg 24h", num: true, fmt: delta }, { k: "growingShare", label: "Growing", num: true, fmt: (v) => pctPlain(v, 0) }, { k: "examples", label: "Examples", fmt: (v) => v.map((e) => `<a href="#/game/${e.universeId}">${esc(e.name)}</a>`).join(", "), text: (r) => r.examples.map((e) => e.name).join("; ") }], d.patterns, { name: "patterns" }))]));
+    return root;
+  };
+
+  const ITEM_COLS = [
+    { k: "name", label: "Item", fmt: (v, r) => `<span class="name">${icon(r.icon)}<a href="#/item/${r.assetId}">${esc(v)}</a></span>`, text: (r) => r.name },
+    { k: "price", label: "Lowest resale (R$)", num: true, fmt: (v) => num(v) },
+    { k: "change24h", label: "24h", num: true, fmt: delta },
+    { k: "change7d", label: "7d", num: true, fmt: delta },
+    { k: "volatility", label: "Volatility/day", num: true, fmt: (v) => pctPlain(v) },
+    { k: "rap", label: "RAP (Roblox)", num: true, fmt: (v) => num(v) },
+    { k: "totalQuantity", label: "Supply", num: true, fmt: (v) => num(v) },
+    { k: "unusual", label: "Unusual", fmt: (v, r) => (v ? `<span class="pill spike">${r.zMove.toFixed(1)}σ</span>` : "") },
+    { k: "observations", label: "Samples", num: true },
+    { k: "lastCollectedAt", label: "Updated", fmt: ago },
+  ];
+
+  VIEWS.collectibles = async () => {
+    const d = await api("collectibles");
+    const root = html(`<div></div>`);
+    const picker = await listPicker("items");
+    root.append(grid("g4", [kpi("Watched items", num(d.items.length)), kpi("Unusual moves", num(d.items.filter((i) => i.unusual).length)), kpi("Up 24h", num(d.items.filter((i) => i.change24h > 0).length)), kpi("Down 24h", num(d.items.filter((i) => i.change24h < 0).length))]));
+    root.append(grid("g1", [card("Watched collectibles", table(ITEM_COLS, d.items, { name: "collectibles", empty: "Search below to add limited/collectible items." }))]));
+    const s = card("Find collectibles", `<div class="row"><input class="in" id="cq" placeholder="Item name or asset id"><label class="small muted"><input type="checkbox" id="callitems"> include non-collectibles</label><span class="muted small">Add to</span>${picker}<button class="btn" id="cgo">Search</button><button class="btn ghost" id="cadd">Add by asset id</button></div><div id="cres" class="section"></div>`);
+    root.append(grid("g1", [s]));
+    const add = async (id, btn) => { if (btn) btn.disabled = true; try { await api("collectibles", { method: "POST", body: { assetId: id, listId: $(".lp", s).value } }); toast("Watching item."); if (btn) btn.textContent = "Added"; } catch (e) { toast(e.message, true); if (btn) btn.disabled = false; } };
+    $("#cgo", s).onclick = async () => {
+      const q = $("#cq", s).value.trim();
+      if (!q) return;
+      $("#cres", s).innerHTML = `<div class="loading">Searching…</div>`;
+      try {
+        const r = await api(`collectibles/search?q=${encodeURIComponent(q)}${$("#callitems", s).checked ? "&all=1" : ""}`);
+        $("#cres", s).innerHTML = "";
+        $("#cres", s).append(table([{ k: "name", label: "Item" }, { k: "restrictions", label: "Type" }, { k: "lowestResalePrice", label: "Lowest resale", num: true, fmt: (v) => num(v) }, { k: "totalQuantity", label: "Supply", num: true, fmt: (v) => num(v) }, { k: "assetId", label: "", fmt: (v) => `<button class="btn sm add" data-id="${v}">Watch</button>` }], r.items, { noTools: true, after: (w) => $$(".add", w).forEach((b) => (b.onclick = () => add(Number(b.dataset.id), b))) }));
+      } catch (e) { $("#cres", s).innerHTML = `<div class="empty down">${esc(e.message)}</div>`; }
+    };
+    $("#cadd", s).onclick = () => { const v = Number($("#cq", s).value.trim()); if (v) add(v); };
+    root.append(html(`<p class="muted small section">Prices are the lowest listed resale price at each sample (hourly), not completed sales. RAP and sales counts come from Roblox's public resale feed, which may lag; trade volume and liquidity are not available. No purchases or trades are ever automated.</p>`));
+    return root;
+  };
+
+  VIEWS.item = async (id) => {
+    const d = await api(`collectibles/${id}?${rangeQS()}`);
+    const m = d.metrics;
+    const root = html(`<div></div>`);
+    root.append(html(`<div class="card"><div class="row">${icon(m.icon)}<div><h3>${esc(m.name)}</h3><div class="muted small">asset ${m.assetId} · ${esc(m.creator || "")} · ${esc(m.restrictions || "")} · <a href="https://www.roblox.com/catalog/${m.assetId}" target="_blank" rel="noopener noreferrer">Roblox page</a></div></div></div></div>`));
+    root.append(grid("g6", [kpi("Lowest resale", `${num(m.price)} R$`, `<span class="muted">${esc(dt(m.priceAt))}</span>`), kpi("24h", delta(m.change24h)), kpi("7d", delta(m.change7d)), kpi("Volatility", pctPlain(m.volatility), `<span class="muted">std. dev. of daily log returns</span>`), kpi("RAP (Roblox)", num(m.rap), `<span class="muted">sales: ${num(m.sales)}</span>`), kpi("Unusual move", m.unusual ? `<span class="pill spike">${m.zMove.toFixed(1)}σ</span>` : "No")]));
+    root.append(grid("g1", [card("Observed lowest resale price", lineChart([{ name: "Lowest resale", points: d.snapshots.map((s) => ({ t: s.ts, v: s.lowest_resale_price })) }], { yFmt: (v) => num(v) }))]));
+    root.append(grid("g1", [card(`Roblox resale history${m.resalePointsThrough ? ` (latest point ${m.resalePointsThrough})` : ""}`, lineChart([{ name: "Price point", color: "#a78bfa", points: d.resalePoints.map((p) => ({ t: Date.parse(p.day), v: p.value })) }], { yFmt: (v) => num(v), empty: "Roblox returned no resale history for this item." }))]));
+    root.append(grid("g1", [alertForm("item", m.assetId, m.name)]));
+    return root;
+  };
+
+  // --- private experiences ---
+  async function expPicker(root) {
+    const r = await api("experiences");
+    if (!r.experiences.length) return null;
+    if (!r.experiences.some((e) => String(e.id) === state.exp)) state.exp = String(r.experiences[0].id);
+    const sel = html(`<div class="row section"><span class="muted small">Experience</span><select class="in">${r.experiences.map((e) => `<option value="${e.id}" ${String(e.id) === state.exp ? "selected" : ""}>${esc(e.name || e.universe_id)}</option>`).join("")}</select><span class="muted small">last event ${esc(ago(r.experiences.find((e) => String(e.id) === state.exp)?.last_event_at))}</span></div>`);
+    $("select", sel).onchange = (e) => { state.exp = e.target.value; localStorage.setItem("stats.exp", state.exp); render(); };
+    root.append(sel);
+    return r.experiences.find((e) => String(e.id) === state.exp);
+  }
+  const noExp = () => html(`<div class="empty">Connect one of your experiences under <a href="#/experiences">My Experiences</a> first. These metrics come from telemetry your own game sends; they are not available for other people's games.</div>`);
+
+  function luau(key, token) {
+    return `-- ServerScriptService > F8diStats (ModuleScript). Requires Game Settings > Security > Allow HTTP Requests.
+-- Server-only: never put this in ReplicatedStorage. Prefer storing the token as a Roblox Secret.
+local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
+
+local ENDPOINT = "${location.origin}/stats/ingest"
+local KEY = "${key}"
+local TOKEN = "${token || "<paste token>"}"
+
+local Stats, queue, sessions = {}, {}, {}
+
+local function push(event)
+  event.ts = os.time()
+  table.insert(queue, event)
+end
+
+function Stats.flush()
+  if #queue == 0 then return end
+  local batch = queue
+  queue = {}
+  local ok, err = pcall(function()
+    HttpService:RequestAsync({
+      Url = ENDPOINT, Method = "POST",
+      Headers = { ["Content-Type"] = "application/json", ["X-Experience-Key"] = KEY, ["Authorization"] = "Bearer " .. TOKEN },
+      Body = HttpService:JSONEncode({ events = batch }),
+    })
+  end)
+  if not ok then warn("F8diStats flush failed: " .. tostring(err)) end
+end
+
+function Stats.purchase(player, kind, name, robux) push({ type = "purchase", player = player.UserId, source = kind, name = name, amount = robux }) end -- kind: "product" | "gamepass"
+function Stats.currency(player, currency, amount, source) push({ type = "currency", player = player.UserId, currency = currency, amount = amount, source = source }) end -- negative amount = spent
+function Stats.item(player, name, action, rarity, qty) push({ type = "item", player = player.UserId, name = name, source = action, rarity = rarity, amount = qty or 1 }) end -- action: "create" | "consume"
+function Stats.progress(player, value) push({ type = "progress", player = player.UserId, amount = value }) end
+function Stats.custom(player, name, value) push({ type = "custom", player = player and player.UserId, name = name, amount = value }) end
+
+Players.PlayerAdded:Connect(function(p)
+  sessions[p] = { id = HttpService:GenerateGUID(false), start = os.clock() }
+  push({ type = "session_start", player = p.UserId, session = sessions[p].id })
+end)
+Players.PlayerRemoving:Connect(function(p)
+  local s = sessions[p]
+  if s then push({ type = "session_end", player = p.UserId, session = s.id, amount = os.clock() - s.start }) end
+  sessions[p] = nil
+end)
+game:GetService("ScriptContext").Error:Connect(function(message)
+  push({ type = "error", name = string.sub(message, 1, 120) })
+end)
+task.spawn(function()
+  while true do
+    task.wait(30)
+    push({ type = "perf", name = "server_fps", amount = workspace:GetRealPhysicsFPS() })
+    Stats.flush()
+  end
+end)
+game:BindToClose(Stats.flush)
+
+return Stats`;
+  }
+
+  VIEWS.experiences = async () => {
+    const r = await api("experiences");
+    const root = html(`<div></div>`);
+    const c = card("Connect an experience you own", `<div class="row"><input class="in" id="eref" placeholder="roblox.com/games URL, place id, or u:<universe id>"><button class="btn" id="econ">Connect</button></div><div id="enew" class="section"></div><p class="muted small section">Data comes from telemetry your experience sends to this dashboard (sessions, purchases, currency, items, progression, errors, performance, custom events). Roblox Open Cloud is used with a server-side key (ROBLOX_OPEN_CLOUD_KEY${r.openCloudKey ? ", configured" : ", not configured"}) to verify universe metadata. Roblox's own Creator Dashboard figures are not imported; retention, revenue and engagement here are computed from your telemetry.</p>`);
+    $("#econ", c).onclick = async () => {
+      try {
+        const res = await api("experiences", { method: "POST", body: { ref: $("#eref", c).value.trim() } });
+        $("#enew", c).innerHTML = `<div class="banner">Copy this token now; it is stored hashed and can't be shown again.</div><dl class="kv section"><dt>Ingest key</dt><dd class="mono">${esc(res.ingestKey)}</dd><dt>Token</dt><dd class="mono">${esc(res.token)}</dd></dl><pre class="code section">${esc(luau(res.ingestKey, res.token))}</pre>`;
+      } catch (e) { toast(e.message, true); }
+    };
+    root.append(c);
+    root.append(grid("g1", [card("Connected experiences", table([
+      { k: "name", label: "Experience", fmt: (v, e) => `${esc(v || e.universe_id)} <span class="muted small">${e.universe_id}</span>` },
+      { k: "ingest_key", label: "Ingest key", fmt: (v) => `<span class="mono">${esc(v)}</span>` },
+      { k: "last_event_at", label: "Last event", fmt: ago },
+      { k: "cloud_status", label: "Open Cloud", fmt: (v) => { if (!v) return "–"; const s = JSON.parse(v); return s.ok ? `<span class="ok">OK</span> ${esc(s.displayName || "")}` : `<span class="bad">${esc(s.error)}</span>`; } },
+      { k: "id", label: "", fmt: (v) => `<button class="btn ghost sm oc" data-id="${v}">Check Open Cloud</button> <button class="btn ghost sm rot" data-id="${v}">Rotate token</button> <button class="btn danger sm del" data-id="${v}">Delete</button>` },
+    ], r.experiences, { noTools: true, empty: "No experiences connected.", after: (w) => {
+      $$(".oc", w).forEach((b) => (b.onclick = async () => { try { await api(`experiences/${b.dataset.id}/cloud-check`, { method: "POST" }); render(); } catch (e) { toast(e.message, true); } }));
+      $$(".rot", w).forEach((b) => (b.onclick = async () => { if (!confirm("Rotate token? The old token stops working immediately.")) return; const res = await api(`experiences/${b.dataset.id}/rotate`, { method: "POST" }); prompt("New token (copy now):", res.token); }));
+      $$(".del", w).forEach((b) => (b.onclick = async () => { if (!confirm("Delete this experience and all its telemetry?")) return; await api(`experiences/${b.dataset.id}`, { method: "DELETE" }); render(); }));
+    } }))]));
+    const exp = await expPicker(root);
+    if (exp) {
+      const a = await api(`experiences/${exp.id}/analytics?${rangeQS()}`);
+      const s = a.summary;
+      root.append(grid("g6", [kpi("Users", num(s.users)), kpi("Avg DAU", num(s.avgDau)), kpi("Sessions", num(s.sessions)), kpi("Avg session", s.avgSessionSec ? `${(s.avgSessionSec / 60).toFixed(1)} min` : "–"), kpi("Sessions / user", num(s.sessionsPerUser, 2)), kpi("Script errors", num(s.errors))]));
+      root.append(grid("g1", [card("Daily active users", lineChart([{ name: "DAU", points: a.daily.map((d) => ({ t: Date.parse(d.day), v: d.dau })) }, { name: "New users", points: a.daily.map((d) => ({ t: Date.parse(d.day), v: d.newUsers })) }]))]));
+      root.append(grid("g3", [
+        card("Top script errors", table([{ k: "name", label: "Error" }, { k: "count", label: "Count", num: true }], a.errors, { noTools: true })),
+        card("Technical performance", table([{ k: "name", label: "Metric" }, { k: "avg", label: "Avg", num: true, fmt: (v) => num(v, 1) }, { k: "p95", label: "p95", num: true, fmt: (v) => num(v, 1) }, { k: "samples", label: "Samples", num: true }], a.perf, { noTools: true })),
+        card("Custom events", table([{ k: "name", label: "Event" }, { k: "count", label: "Count", num: true }, { k: "players", label: "Players", num: true }, { k: "sum", label: "Sum", num: true, fmt: (v) => num(v, 1) }], a.custom, { noTools: true })),
+      ]));
+      root.append(grid("g1", [card("Telemetry module (Luau)", `<pre class="code">${esc(luau(exp.ingest_key, ""))}</pre>`)]));
+    }
+    return root;
+  };
+
+  VIEWS.economy = async () => {
+    const root = html(`<div></div>`);
+    const exp = await expPicker(root);
+    if (!exp) return noExp();
+    const e = await api(`experiences/${exp.id}/economy?${rangeQS()}`);
+    root.append(grid("g1", [card("Recommendations", e.recommendations.length ? `<ul class="clean">${e.recommendations.map((r) => `<li><span class="pill ${r.severity === "warning" ? "spike" : ""}">${esc(r.severity)}</span> ${esc(r.text)}</li>`).join("")}</ul>` : `<div class="empty">No imbalances detected${e.eventCount ? "" : " (no economy events received yet)"}.</div>`)]));
+    for (const c of e.currencies) {
+      root.append(grid("g4", [kpi(`${c.currency} earned`, compact(c.earned)), kpi(`${c.currency} spent`, compact(c.spent)), kpi("Net flow", compact(c.netFlow)), kpi("Earn / spend ratio", isNum(c.earnSpendRatio) ? c.earnSpendRatio.toFixed(2) : "–")]));
+      root.append(grid("g3", [card(`${c.currency} daily flow`, lineChart([{ name: "Earned", color: "#34d399", points: c.daily.map((d) => ({ t: Date.parse(d.day), v: d.earned })) }, { name: "Spent", color: "#f87171", points: c.daily.map((d) => ({ t: Date.parse(d.day), v: d.spent })) }])), card("Sources", bars(c.sources.map((s) => ({ label: s.name, value: s.amount })))), card("Sinks", bars(c.sinks.map((s) => ({ label: s.name, value: s.amount }))))]));
+    }
+    root.append(grid("g3", [
+      card("Item creation vs consumption", table([{ k: "name", label: "Item" }, { k: "created", label: "Created", num: true, fmt: (v) => num(v) }, { k: "consumed", label: "Consumed", num: true, fmt: (v) => num(v) }], e.items, { noTools: true })),
+      card("Rarity distribution", bars(e.rarity.map((r) => ({ label: r.name, value: r.count })))),
+      card("Progression (avg value per day)", lineChart([{ name: "Avg progression", points: e.progression.map((p) => ({ t: Date.parse(p.day), v: p.avg })) }])),
+    ]));
+    root.append(grid("g1", [card("Suspicious anomalies (> 4σ daily earnings)", table([{ k: "currency", label: "Currency" }, { k: "player", label: "Player (pseudonymised)", fmt: (v) => `<span class="mono">${esc(v)}</span>` }, { k: "day", label: "Day" }, { k: "earned", label: "Earned", num: true, fmt: (v) => num(v) }, { k: "zScore", label: "z", num: true, fmt: (v) => num(v, 1) }], e.anomalies, { name: "economy-anomalies", empty: "No anomalies." }))]));
+    return root;
+  };
+
+  VIEWS.monetization = async () => {
+    const root = html(`<div></div>`);
+    const exp = await expPicker(root);
+    if (!exp) return noExp();
+    const a = await api(`experiences/${exp.id}/analytics?${rangeQS()}`);
+    const s = a.summary;
+    root.append(grid("g4", [kpi("Revenue (R$, reported)", num(s.revenue)), kpi("Paying users", num(s.payers)), kpi("Conversion", pctPlain(s.conversion, 2)), kpi("ARPPU (R$)", num(s.arppu, 1))]));
+    root.append(grid("g2", [card("Daily revenue", lineChart([{ name: "Robux", color: "#34d399", points: a.daily.map((d) => ({ t: Date.parse(d.day), v: d.revenue })) }])), card("Daily conversion", lineChart([{ name: "Conversion", points: a.daily.map((d) => ({ t: Date.parse(d.day), v: d.conversion })) }], { yFmt: (v) => pctPlain(v) }))]));
+    const pcols = [{ k: "name", label: "Name" }, { k: "purchases", label: "Purchases", num: true }, { k: "buyers", label: "Buyers", num: true }, { k: "robux", label: "Robux", num: true, fmt: (v) => num(v) }];
+    root.append(grid("g2", [card("Developer products", table(pcols, a.products.filter((p) => p.kind !== "gamepass"), { name: "dev-products" })), card("Game passes", table(pcols, a.products.filter((p) => p.kind === "gamepass"), { name: "game-passes" }))]));
+    root.append(html(`<p class="muted small section">Revenue counts purchases your scripts reported via F8diStats.purchase(), before Roblox's marketplace fee.</p>`));
+    return root;
+  };
+
+  VIEWS.retention = async () => {
+    const root = html(`<div></div>`);
+    const exp = await expPicker(root);
+    if (!exp) return noExp();
+    const a = await api(`experiences/${exp.id}/analytics?${rangeQS()}`);
+    const s = a.summary;
+    const heat = (v) => (isNum(v) ? `<span class="pill" data-bg="rgba(34,211,238,${(0.08 + v * 0.8).toFixed(2)})">${pctPlain(v, 0)}</span>` : "–");
+    root.append(grid("g4", [kpi("Avg session", s.avgSessionSec ? `${(s.avgSessionSec / 60).toFixed(1)} min` : "–"), kpi("Median session", s.medianSessionSec ? `${(s.medianSessionSec / 60).toFixed(1)} min` : "–"), kpi("Sessions per user", num(s.sessionsPerUser, 2)), kpi("Users", num(s.users))]));
+    root.append(grid("g1", [card("Cohort retention (share of a day's new players who returned on day N)", table([{ k: "cohort", label: "Cohort" }, { k: "size", label: "New players", num: true }, { k: "d1", label: "D1", num: true, fmt: heat }, { k: "d7", label: "D7", num: true, fmt: heat }, { k: "d30", label: "D30", num: true, fmt: heat }], a.retention, { name: "retention", sort: "cohort" }))]));
+    return root;
+  };
+
+  VIEWS.reports = async () => {
+    const r = await api("reports");
+    const root = html(`<div></div>`);
+    const c = card("Generate a report", `<div class="row">${Object.entries(r.types).map(([k, v]) => `<button class="btn sm gen" data-t="${k}">${esc(v)}</button>`).join("")}</div><p class="muted small section">Reports use only stored observations: every number comes from the database, with sources, collection timestamps, confidence and limitations. Daily, weekly (Mondays) and monthly (1st) reports are generated automatically. ${"If a Workers AI binding named AI exists, a clearly labelled AI summary of the same numbers is added."}</p>`);
+    $$(".gen", c).forEach((b) => (b.onclick = async () => { b.disabled = true; try { const res = await api("reports", { method: "POST", body: { type: b.dataset.t, options: { experienceId: state.exp || undefined } } }); location.hash = `#/report/${res.id}`; } catch (e) { toast(e.message, true); b.disabled = false; } }));
+    root.append(c);
+    root.append(grid("g1", [card("Reports", table([{ k: "title", label: "Report", fmt: (v, x) => `<a href="#/report/${x.id}">${esc(v)}</a>` }, { k: "type", label: "Type" }, { k: "created_at", label: "Created", fmt: dt }, { k: "confidence", label: "Confidence", num: true, fmt: conf }], r.reports, { name: "reports", empty: "No reports yet." }))]));
+    return root;
+  };
+
+  VIEWS.report = async (id) => {
+    const r = await api(`reports/${id}`);
+    const b = r.body;
+    const root = html(`<div></div>`);
+    root.append(html(`<div class="card"><div class="row"><h3>${esc(r.title)}</h3><span class="spacer"></span><span class="pill">confidence ${esc(r.confidence)}</span><button class="btn ghost sm" id="dl">Export JSON</button><button class="btn danger sm" id="del">Delete</button></div><div class="muted small">Generated ${esc(dt(b.generatedAt))} · data from ${esc(dt(b.coverage?.from))} to ${esc(dt(b.coverage?.to))}</div></div>`));
+    $("#dl", root).onclick = () => { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([JSON.stringify(r, null, 2)], { type: "application/json" })); a.download = `report-${id}.json`; a.click(); };
+    $("#del", root).onclick = async () => { if (confirm("Delete report?")) { await api(`reports/${id}`, { method: "DELETE" }); location.hash = "#/reports"; } };
+    if (b.stats?.length) root.append(grid("g4", b.stats.map((s) => kpi(s.label, esc(s.value)))));
+    root.append(grid("g2", [
+      card("Important findings (observed)", b.findings?.length ? `<ul class="clean">${b.findings.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>` : `<div class="empty">No notable findings.</div>`),
+      card("Suggested actions", b.actions?.length ? `<ul class="clean">${b.actions.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>` : `<div class="empty">None.</div>`),
+    ]));
+    if (b.narrative) root.append(grid("g1", [card("AI summary", `<p>${esc(b.narrative)}</p><p class="muted small section">${esc(b.narrativeLabel)}</p>`)]));
+    for (const s of b.sections || []) {
+      if (s.table) {
+        const cols = s.table.length ? Object.keys(s.table[0]).filter((k) => k !== "universeId").map((k) => ({ k, label: k, num: typeof s.table[0][k] === "number", fmt: k === "name" && s.table[0].universeId ? (v, row) => `<a href="#/game/${row.universeId}">${esc(v)}</a>` : k === "confidence" ? conf : undefined })) : [{ k: "x", label: "" }];
+        root.append(grid("g1", [card(s.heading, table(cols, s.table, { name: s.heading, noTools: false, empty: "No rows." }))]));
+      } else if (s.items) {
+        root.append(grid("g1", [card(s.heading, s.items.length ? s.items.map((i) => `<div class="section"><b>${esc(i.title)}</b>${i.observed ? `<div class="evidence"><div class="tag">Observed</div>${i.observed.map((o) => `<div>${esc(o)}</div>`).join("")}</div>` : ""}${i.inferred ? `<div class="evidence inferred"><div class="tag">${esc(i.inferredLabel || "Inferred")}</div>${i.inferred.map((o) => `<div>${esc(o)}</div>`).join("")}</div>` : ""}</div>`).join("") : `<div class="empty">Nothing to report.</div>`)]));
+      }
+    }
+    root.append(grid("g1", [card("Predictions (model-based projections, not observations)", b.predictions?.length ? table([{ k: "name", label: "Game" }, { k: "projected7d", label: "Projected avg players in 7d", num: true, fmt: (v) => num(v) }, { k: "basis", label: "Basis" }], b.predictions, { noTools: true }) : `<div class="empty">No projections in this report.</div>`)]));
+    root.append(grid("g2", [
+      card("Data limitations", `<ul class="clean">${(b.limitations || []).map((l) => `<li>${esc(l)}</li>`).join("")}</ul>`),
+      card("Sources", `<ul class="clean">${(b.sources || []).map((s) => `<li class="mono">${esc(s)}</li>`).join("")}</ul><div class="muted small section">Collection window: ${esc(dt(b.coverage?.from))} – ${esc(dt(b.coverage?.to))}</div>`),
+    ]));
+    return root;
+  };
+
+  VIEWS.alerts = async () => {
+    const [a, r] = await Promise.all([api("alerts"), api("alerts/rules")]);
+    const root = html(`<div></div>`);
+    root.append(grid("g1", [card("Triggered alerts", table([{ k: "ts", label: "When", fmt: dt }, { k: "message", label: "Alert" }, { k: "acknowledged", label: "", fmt: (v, x) => (v ? `<span class="muted small">acknowledged</span>` : `<button class="btn ghost sm ack" data-id="${x.id}">Acknowledge</button>`) }], a.alerts, { name: "alerts", empty: "No alerts have fired.", after: (w) => $$(".ack", w).forEach((b) => (b.onclick = async () => { await api(`alerts/${b.dataset.id}/ack`, { method: "POST" }); render(); })) }), `<button class="btn ghost sm" id="ackall">Acknowledge all</button>`)]));
+    $("#ackall", root).onclick = async () => { await api("alerts/ack-all", { method: "POST" }); render(); };
+    root.append(grid("g1", [card("Alert rules", table([{ k: "target_name", label: "Target", fmt: (v, x) => `<a href="#/${x.target_type === "game" ? "game" : "item"}/${x.target_id}">${esc(v || x.target_id)}</a>` }, { k: "metric", label: "Condition" }, { k: "threshold", label: "Threshold", num: true }, { k: "cooldown_minutes", label: "Cooldown (min)", num: true }, { k: "last_triggered_at", label: "Last fired", fmt: ago }, { k: "enabled", label: "", fmt: (v, x) => `<button class="btn ghost sm tog" data-id="${x.id}" data-on="${v}">${v ? "Disable" : "Enable"}</button> <button class="btn danger sm del" data-id="${x.id}">Delete</button>` }], r.rules, { name: "alert-rules", empty: "Create alerts from a game or item page.", after: (w) => {
+      $$(".tog", w).forEach((b) => (b.onclick = async () => { await api(`alerts/rules/${b.dataset.id}`, { method: "PATCH", body: { enabled: b.dataset.on !== "1" } }); render(); }));
+      $$(".del", w).forEach((b) => (b.onclick = async () => { await api(`alerts/rules/${b.dataset.id}`, { method: "DELETE" }); render(); }));
+    } }))]));
+    root.append(html(`<p class="muted small section">Alerts are evaluated after each collection. Set STATS_ALERT_WEBHOOK_URL to also receive them in a private Discord channel.</p>`));
+    return root;
+  };
+
+  VIEWS.watchlists = async () => {
+    const ls = await lists();
+    const root = html(`<div></div>`);
+    const c = card("Create list", `<div class="row"><input class="in" id="ln" placeholder="List name" maxlength="60"><select class="in" id="lk"><option value="games">Games</option><option value="items">Collectibles</option></select><button class="btn" id="lc">Create</button></div>`);
+    $("#lc", c).onclick = async () => { try { await api("lists", { method: "POST", body: { name: $("#ln", c).value, kind: $("#lk", c).value } }); render(); } catch (e) { toast(e.message, true); } };
+    root.append(c);
+    for (const l of ls) {
+      const members = l.kind === "games" ? (await api(`games?list=${l.id}`)).games : (await api("collectibles")).items;
+      const body = html(`<div><div class="row"><input class="in ref" placeholder="${l.kind === "games" ? "Game URL, place id, or u:<universe id>" : "Asset id"}"><button class="btn sm add">Add</button><span class="spacer"></span><button class="btn danger sm dl">Delete list</button></div><div class="tbl section"></div></div>`);
+      const memberIds = l.kind === "items" ? new Set() : null;
+      $(".tbl", body).append(l.kind === "games"
+        ? table([GAME_COLS[0], GAME_COLS[1], GAME_COLS[3], GAME_COLS[9], { k: "universeId", label: "", fmt: (v) => `<button class="btn ghost sm rm" data-id="${v}">Remove</button>` }], members, { name: l.name, after: (w) => $$(".rm", w).forEach((b) => (b.onclick = async () => { await api(`lists/${l.id}/items/${b.dataset.id}`, { method: "DELETE" }); render(); })) })
+        : table([ITEM_COLS[0], ITEM_COLS[1], ITEM_COLS[2], { k: "assetId", label: "", fmt: (v) => `<button class="btn ghost sm rm" data-id="${v}">Remove</button>` }], members, { name: l.name, after: (w) => $$(".rm", w).forEach((b) => (b.onclick = async () => { await api(`lists/${l.id}/items/${b.dataset.id}`, { method: "DELETE" }); render(); })) }));
+      $(".add", body).onclick = async () => { try { await api(`lists/${l.id}/items`, { method: "POST", body: { ref: $(".ref", body).value.trim() } }); toast("Added."); render(); } catch (e) { toast(e.message, true); } };
+      $(".dl", body).onclick = async () => { if (confirm(`Delete list "${l.name}"? Collected history is kept.`)) { await api(`lists/${l.id}`, { method: "DELETE" }); render(); } };
+      root.append(grid("g1", [card(`${l.name} · ${l.kind === "games" ? "games" : "collectibles"} (${l.size})`, body)]));
+      void memberIds;
+    }
+    return root;
+  };
+
+  VIEWS.data = async () => {
+    const root = html(`<div></div>`);
+    const params = new URLSearchParams(location.hash.split("?")[1] || "");
+    const ds = params.get("dataset") || "game_hourly";
+    const res = await api(`explorer?dataset=${ds}&${rangeQS()}&limit=${params.get("limit") || 500}${params.get("id") ? `&id=${encodeURIComponent(params.get("id"))}` : ""}`);
+    const c = card("Query", `<div class="row"><select class="in" id="ds">${res.datasets.map((d) => `<option ${d === ds ? "selected" : ""}>${d}</option>`).join("")}</select><input class="in" id="tid" placeholder="Target id (optional)" value="${esc(params.get("id") || "")}"><input class="in" id="lim" type="number" value="${esc(params.get("limit") || 500)}" title="Row limit"><button class="btn" id="run">Run</button><span class="spacer"></span><a class="btn ghost sm" id="csv">Export CSV</a><a class="btn ghost sm" id="jsn">Export JSON</a></div><p class="muted small section">Read-only views of the stored data within the selected date range. Timestamps are Unix milliseconds (UTC).</p>`);
+    const qs = () => `dataset=${$("#ds", c).value}&${rangeQS()}&limit=${$("#lim", c).value}${$("#tid", c).value ? `&id=${encodeURIComponent($("#tid", c).value)}` : ""}`;
+    $("#run", c).onclick = () => (location.hash = `#/data?${qs()}`);
+    const setLinks = () => { $("#csv", c).href = `/stats/api/export?${qs()}&format=csv`; $("#jsn", c).href = `/stats/api/export?${qs()}`; };
+    setLinks();
+    $$("select,input", c).forEach((i) => (i.onchange = setLinks));
+    root.append(c);
+    const cols = res.rows.length ? Object.keys(res.rows[0]).map((k) => ({ k, label: k, num: typeof res.rows[0][k] === "number" && !/ts|hour|_at$/.test(k), fmt: /(^ts$|^hour$|_at$|_ts$)/.test(k) ? (v) => (isNum(v) ? `<span title="${v}">${esc(dt(v))}</span>` : "–") : undefined })) : [{ k: "x", label: "" }];
+    root.append(grid("g1", [card(`${ds} · ${res.rows.length} rows`, table(cols, res.rows, { name: ds, empty: "No rows in this range." }))]));
+    return root;
+  };
+
+  VIEWS.settings = async () => {
+    const [st, se] = await Promise.all([api("status"), api("sessions")]);
+    const cfg = st.config, q = st.queue;
+    const yes = (b, extra = "") => (b ? `<span class="ok">Configured</span>` : `<span class="muted">Not set</span>${extra}`);
+    const root = html(`<div></div>`);
+    root.append(grid("g2", [
+      card("Configuration", `<dl class="kv"><dt>Database (STATS_DB)</dt><dd>${yes(cfg.database)}</dd><dt>Scheduled collection (STATS_CRON_TOKEN)</dt><dd>${yes(cfg.cronToken, " · collection runs only while the dashboard is open")}</dd><dt>Alert webhook</dt><dd>${yes(cfg.alertWebhook)}</dd><dt>Workers AI (AI)</dt><dd>${yes(cfg.workersAi)}</dd><dt>Open Cloud key</dt><dd>${yes(cfg.openCloudKey)}</dd></dl>
+        <dl class="kv section"><dt>Tracked games</dt><dd>every ${cfg.settings.trackedIntervalMin} min (raw snapshots)</dd><dt>Discovered games</dt><dd>every ${cfg.settings.discoveryIntervalMin} min, up to ${cfg.settings.discoveryCap} games</dd><dt>Collectibles</dt><dd>every ${cfg.settings.itemIntervalMin} min</dd><dt>Metrics computed</dt><dd>${esc(ago(st.metricsComputedAt))}</dd></dl>`),
+      card("Collection", `${collectionStatus(q)}<div class="row section"><button class="btn" id="collect">Collect now</button><button class="btn ghost" id="retry" ${q.failed.length ? "" : "disabled"}>Retry failed jobs (${q.failed.length})</button></div>`),
+    ]));
+    $("#collect", root).onclick = async (e) => { e.target.disabled = true; try { const r = await api("collect", { method: "POST" }); toast(`Ran ${r.ran.length} job(s), ${r.ran.filter((x) => !x.ok).length} failed, ${r.remaining} queued.`); render(); } catch (err) { toast(err.message, true); e.target.disabled = false; } };
+    $("#retry", root).onclick = async () => { await api("jobs/retry-failed", { method: "POST" }); render(); };
+    root.append(grid("g1", [card("Recent job runs", table([{ k: "job_type", label: "Job" }, { k: "started_at", label: "Started", fmt: dt }, { k: "finished_at", label: "Took", num: true, sort: (r) => r.finished_at - r.started_at, fmt: (v, r) => (v ? `${((v - r.started_at) / 1000).toFixed(1)}s` : "running") }, { k: "ok", label: "Result", fmt: (v) => (v ? `<span class="ok">ok</span>` : v === 0 ? `<span class="bad">failed</span>` : "–") }, { k: "items", label: "Items", num: true }, { k: "error", label: "Error", fmt: (v) => `<span class="small">${esc(v || "")}</span>` }], q.runs, { name: "job-runs" }))]));
+    if (q.failed.length || q.retrying.length) root.append(grid("g1", [card("Failed and retrying jobs", table([{ k: "type", label: "Job" }, { k: "attempts", label: "Attempts", num: true }, { k: "last_error", label: "Last error" }], [...q.failed, ...q.retrying], { noTools: true }))]));
+    root.append(grid("g1", [card("Sessions", table([{ k: "id", label: "Session", fmt: (v) => `<span class="mono">${esc(v)}…</span>` }, { k: "created_at", label: "Signed in", fmt: dt }, { k: "last_seen_at", label: "Last active", fmt: ago }, { k: "expires_at", label: "Expires", fmt: dt }, { k: "user_agent", label: "Browser", fmt: (v) => `<span class="small muted">${esc((v || "").slice(0, 80))}</span>` }], se.sessions, { noTools: true }), `<button class="btn danger sm" id="revoke">Sign out everywhere</button>`)]));
+    $("#revoke", root).onclick = async () => { if (confirm("Sign out all sessions, including this one?")) { await api("sessions/revoke-all", { method: "POST" }); location.href = "/stats/login"; } };
+    return root;
+  };
+
+  // ---------- routing ----------
+  const NAV = [
+    ["Analytics", [["overview", "Overview"], ["trends", "Game Trends"], ["explorer", "Game Explorer"], ["competitors", "Competitors"], ["genres", "Genre Analytics"], ["opportunities", "Opportunities"], ["collectibles", "Collectibles"]]],
+    ["My games", [["experiences", "My Experiences"], ["economy", "Economy"], ["monetization", "Monetization"], ["retention", "Retention"]]],
+    ["Research", [["reports", "AI Reports"], ["alerts", "Alerts"], ["watchlists", "Watchlists"], ["data", "Data Explorer"]]],
+    ["", [["settings", "Settings"]]],
+  ];
+  const TITLES = Object.fromEntries(NAV.flatMap(([, items]) => items));
+  Object.assign(TITLES, { game: "Game", item: "Collectible", report: "Report" });
+  const PARENT = { game: "explorer", item: "collectibles", report: "reports" };
+
+  function drawNav(current) {
+    $("#nav").innerHTML = NAV.map(([g, items]) => `${g ? `<div class="group">${esc(g)}</div>` : `<div class="group"></div>`}${items.map(([k, v]) => `<a href="#/${k}" class="${k === (PARENT[current] || current) ? "active" : ""}"><span>${esc(v)}</span>${k === "alerts" && navAlerts ? `<span class="count">${navAlerts}</span>` : ""}</a>`).join("")}`).join("");
+  }
+  let navAlerts = 0;
+  let renderSeq = 0;
+
+  async function render() {
+    const [rawRoute] = location.hash.replace(/^#\/?/, "").split("?");
+    const [name = "overview", arg] = rawRoute.split("/");
+    const key = VIEWS[name] ? name : "overview";
+    drawNav(key);
+    $("#page-title").textContent = TITLES[key] || "Overview";
+    $("#sidebar").classList.remove("open");
+    const seq = ++renderSeq;
+    view.innerHTML = `<div class="loading">Loading…</div>`;
+    try {
+      const node = await VIEWS[key](arg ? decodeURIComponent(arg) : undefined);
+      if (seq !== renderSeq) return;
+      view.innerHTML = "";
+      view.append(node);
+      applyDynamic(view);
+      view.style.animation = "none";
+      void view.offsetWidth;
+      view.style.animation = "";
+      $("#updated").textContent = `Updated ${new Date().toLocaleTimeString()}`;
+    } catch (e) {
+      if (seq !== renderSeq) return;
+      view.innerHTML = `<div class="empty down">${esc(e.message)}</div>`;
+    }
+  }
+
+  async function refreshBanner() {
+    try {
+      const st = await api("status");
+      const q = st.queue;
+      const errs = q.errors24h.reduce((s, e) => s + e.n, 0);
+      const b = $("#banner");
+      const stale = !q.lastTickAt || Date.now() - q.lastTickAt > 2 * 3600e3;
+      if (errs || stale) {
+        b.hidden = false;
+        b.className = `banner${errs ? " err" : ""}`;
+        b.textContent = [stale ? `Last collection ${ago(q.lastTickAt)}.${st.config.cronToken ? "" : " Scheduled collection isn't configured, so data is only collected while the dashboard is open."}` : "", errs ? `${errs} collection error(s) in the last 24h: ${q.errors24h.map((e) => `${e.job_type} (${e.sample})`).join("; ").slice(0, 300)}` : ""].filter(Boolean).join(" ");
+      } else b.hidden = true;
+      const a = await api("alerts");
+      navAlerts = a.alerts.filter((x) => !x.acknowledged).length;
+      drawNav((location.hash.replace(/^#\/?/, "").split(/[/?]/)[0]) || "overview");
+    } catch { /* shown on next render */ }
+  }
+
+  $("#logout").onclick = async () => { try { await api("logout", { method: "POST" }); } finally { location.href = "/stats/login"; } };
+  $("#menu").onclick = () => $("#sidebar").classList.toggle("open");
+  addEventListener("hashchange", render);
+  drawRange();
+  render();
+  refreshBanner();
+  setInterval(refreshBanner, 120_000);
+})();
