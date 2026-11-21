@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex">
+<title>Valorant Shop — F8di</title>
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0d0e11;
+  --panel: #16181d;
+  --panel-border: #262930;
+  --text-main: #f0f2f5;
+  --text-muted: #8c94a0;
+  --accent: #3b82f6;
+  --accent-hover: #2563eb;
+  --val: #ff4655;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: var(--bg);
+  color: var(--text-main);
+  font-family: 'Inter', sans-serif;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: inherit; text-decoration: none; }
+.wrap { max-width: 980px; margin: 0 auto; padding: 0 24px; }
+header { border-bottom: 1px solid var(--panel-border); }
+nav { display: flex; justify-content: space-between; align-items: center; padding: 24px 0; gap: 16px; flex-wrap: wrap; }
+.logo { font-family: 'JetBrains Mono', monospace; font-weight: 500; }
+.logo span { color: var(--val); }
+.account { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 14px; color: var(--text-muted); }
+.account strong { color: var(--text-main); }
+main { padding: 40px 0 80px; }
+h1 { font-size: 32px; letter-spacing: -0.02em; margin-bottom: 8px; }
+h2 { font-size: 20px; letter-spacing: -0.01em; }
+.muted { color: var(--text-muted); }
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  padding: 24px;
+}
+.steps { display: grid; gap: 20px; margin-top: 28px; }
+.step-num {
+  display: inline-flex; width: 26px; height: 26px; border-radius: 50%;
+  align-items: center; justify-content: center; font-size: 13px; font-weight: 600;
+  background: var(--panel-border); margin-right: 10px;
+}
+.step h2 { display: flex; align-items: center; margin-bottom: 10px; font-size: 16px; }
+.step p { font-size: 14px; color: var(--text-muted); margin-bottom: 14px; }
+textarea, select {
+  width: 100%; background: var(--bg); color: var(--text-main);
+  border: 1px solid var(--panel-border); border-radius: 6px;
+  padding: 12px; font-family: 'JetBrains Mono', monospace; font-size: 13px;
+}
+textarea { min-height: 90px; resize: vertical; }
+textarea:focus, select:focus { outline: none; border-color: var(--accent); }
+select { font-family: 'Inter', sans-serif; width: auto; padding: 8px 10px; }
+.btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--accent); color: #fff; font-weight: 600; font-size: 14px;
+  padding: 11px 18px; border: none; border-radius: 6px; cursor: pointer;
+  transition: background 0.15s ease;
+}
+.btn:hover { background: var(--accent-hover); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn.val { background: var(--val); }
+.btn.val:hover { background: #e03a48; }
+.btn.ghost { background: transparent; border: 1px solid var(--panel-border); color: var(--text-main); }
+.btn.ghost:hover { border-color: var(--text-muted); }
+.row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 14px; }
+.status { font-size: 14px; margin-top: 14px; min-height: 1.4em; }
+.status.err { color: #f87171; }
+.note { font-size: 12px; color: var(--text-muted); margin-top: 24px; }
+.wallet { display: flex; gap: 10px; flex-wrap: wrap; }
+.coin {
+  font-family: 'JetBrains Mono', monospace; font-size: 13px;
+  padding: 6px 12px; border: 1px solid var(--panel-border); border-radius: 999px; background: var(--panel);
+}
+section { margin-top: 40px; }
+.section-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+.timer { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--text-muted); }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 16px; }
+.card {
+  background: var(--panel); border: 1px solid var(--panel-border);
+  border-radius: 10px; overflow: hidden; display: flex; flex-direction: column;
+  border-top: 3px solid var(--tier, var(--panel-border));
+}
+.card-img {
+  height: 120px; display: flex; align-items: center; justify-content: center; padding: 16px;
+  background: radial-gradient(circle at 50% 60%, color-mix(in srgb, var(--tier, #444) 25%, transparent), transparent 70%);
+}
+.card-img img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.card-body { padding: 14px 16px 16px; display: flex; justify-content: space-between; align-items: flex-end; gap: 10px; flex: 1; }
+.card-name { font-weight: 600; font-size: 14px; line-height: 1.3; }
+.card-tier { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+.card-tier img { width: 14px; height: 14px; }
+.price { font-family: 'JetBrains Mono', monospace; font-size: 14px; white-space: nowrap; text-align: right; }
+.price s { display: block; color: var(--text-muted); font-size: 12px; }
+.discount { color: #4ade80; font-size: 12px; display: block; }
+.bundle { padding: 0; overflow: hidden; }
+.bundle-img { width: 100%; display: block; max-height: 320px; object-fit: cover; }
+.bundle-info { padding: 18px 20px; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.bundle + .bundle { margin-top: 16px; }
+details.step summary { cursor: pointer; font-size: 14px; }
+.hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <nav>
+      <a class="logo" href="/">f8di.com <span>/ shop</span></a>
+      <div class="account hidden" id="account-bar">
+        <span>Signed in as <strong id="account-name">—</strong></span>
+        <button class="btn ghost" id="refresh-btn" type="button">Refresh</button>
+        <button class="btn ghost" id="logout-btn" type="button">Sign out</button>
+      </div>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="wrap">
+
+    <div id="login-view">
+      <h1>Valorant Shop</h1>
+      <p class="muted">Check your daily store, bundles and Night Market without opening the game.</p>
+
+      <div class="steps">
+        <div class="panel step">
+          <h2><span class="step-num">1</span>Add the shop button to your bookmarks (one time)</h2>
+          <p>Drag this button onto your browser's bookmarks bar. If you don't see the bar, press Ctrl+Shift+B (Cmd+Shift+B on Mac).</p>
+          <a class="btn ghost" id="bookmarklet" title="Drag me to your bookmarks bar">★ F8di Shop</a>
+        </div>
+
+        <div class="panel step">
+          <h2><span class="step-num">2</span>Sign in with Riot</h2>
+          <p>This opens Riot's official login page, so your password stays on Riot's site. After signing in you'll land on a Riot "404 Page not found" page. That's normal: just click the <strong>★ F8di Shop</strong> bookmark there and you'll come back here signed in.</p>
+          <p>Tick <strong>Stay signed in</strong> on Riot's page. After your first sign-in, opening this page takes you to Riot automatically, so you only click the bookmark.</p>
+          <div class="row" style="margin-top: 0">
+            <a class="btn val" id="riot-login">Sign in with Riot</a>
+            <label class="muted" for="region">Region</label>
+            <select id="region">
+              <option value="auto">Auto-detect</option>
+              <option value="na">North America</option>
+              <option value="latam">Latin America</option>
+              <option value="br">Brazil</option>
+              <option value="eu">Europe</option>
+              <option value="ap">Asia Pacific</option>
+              <option value="kr">Korea</option>
+            </select>
+          </div>
+          <div class="status" id="login-status"></div>
+        </div>
+
+        <details class="panel step">
+          <summary class="muted">Can't use bookmarks (e.g. on a phone)? Paste the link instead</summary>
+          <p style="margin-top: 14px">On the Riot 404 page, copy the full address from the address bar (it contains <code>access_token=</code>) and paste it here.</p>
+          <textarea id="token-url" placeholder="https://playvalorant.com/en-us/opt_in/#access_token=..." spellcheck="false" autocomplete="off"></textarea>
+          <div class="row">
+            <button class="btn" id="load-btn" type="button">View my shop</button>
+          </div>
+        </details>
+      </div>
+
+      <p class="note">Unofficial tool that uses Riot's unofficial store API. Not endorsed by Riot Games. Your login is kept only in this browser and expires after about an hour; then sign in again.</p>
+    </div>
+
+    <div id="shop-view" class="hidden">
+      <div class="section-head">
+        <h1>Your shop</h1>
+        <div class="wallet" id="wallet"></div>
+      </div>
+      <div class="status" id="shop-status"></div>
+
+      <section id="daily-section">
+        <div class="section-head">
+          <h2>Daily offers</h2>
+          <span class="timer" data-timer id="daily-timer"></span>
+        </div>
+        <div class="grid" id="daily-grid"></div>
+      </section>
+
+      <section id="night-section" class="hidden">
+        <div class="section-head">
+          <h2>Night Market</h2>
+          <span class="timer" data-timer id="night-timer"></span>
+        </div>
+        <div class="grid" id="night-grid"></div>
+      </section>
+
+      <section id="bundle-section" class="hidden">
+        <div class="section-head">
+          <h2>Featured bundle</h2>
+        </div>
+        <div id="bundles"></div>
+      </section>
+    </div>
+
+  </div>
+</main>
+
+<script>
+const RIOT_LOGIN_URL =
+  "https://auth.riotgames.com/authorize?redirect_uri=https%3A%2F%2Fplayvalorant.com%2Fopt_in" +
+  "&client_id=play-valorant-web-prod&response_type=token%20id_token&nonce=1&scope=account%20openid";
+const SHOP_ENDPOINT = "/api/valorant/shop";
+const STORAGE_KEY = "valorant-shop-session";
+const REGION_KEY = "valorant-shop-region";
+const AUTO_KEY = "valorant-shop-auto";
+
+const $ = (id) => document.getElementById(id);
+$("riot-login").href = RIOT_LOGIN_URL;
+
+const BOOKMARKLET =
+  "javascript:(()=>{if(!location.hash.includes('access_token'))" +
+  "return alert('Sign in with Riot first, then click this on the page Riot sends you to.');" +
+  `location.href=${JSON.stringify(location.origin + "/shop/")}+location.hash})()`;
+$("bookmarklet").href = BOOKMARKLET;
+$("bookmarklet").addEventListener("click", (e) => {
+  e.preventDefault();
+  alert("Drag this button onto your bookmarks bar instead of clicking it.");
+});
+
+function loadSession() {
+  try {
+    const s = JSON.parse(localStorage.getItem(STORAGE_KEY));
+    if (s && s.accessToken && s.expiresAt > Date.now()) return s;
+  } catch {}
+  localStorage.removeItem(STORAGE_KEY);
+  return null;
+}
+
+function saveSession(s) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+}
+
+function parseTokenUrl(text) {
+  const raw = text.trim();
+  const hashIndex = raw.indexOf("#");
+  const query = hashIndex >= 0 ? raw.slice(hashIndex + 1) : raw.slice(raw.indexOf("?") + 1);
+  const params = new URLSearchParams(query);
+  const accessToken = params.get("access_token");
+  if (!accessToken) return null;
+  const expiresIn = Number(params.get("expires_in")) || 3600;
+  return {
+    accessToken,
+    idToken: params.get("id_token"),
+    expiresAt: Date.now() + (expiresIn - 60) * 1000,
+  };
+}
+
+function formatDuration(seconds) {
+  if (seconds <= 0) return "refreshing…";
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  const pad = (n) => String(n).padStart(2, "0");
+  return (d ? `${d}d ` : "") + `${pad(h)}:${pad(m)}:${pad(s)}`;
+}
+
+function el(tag, attrs = {}, children = []) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "text") node.textContent = v;
+    else if (k === "style") node.style.cssText = v;
+    else node.setAttribute(k, v);
+  }
+  for (const c of [].concat(children)) if (c) node.append(c);
+  return node;
+}
+
+function vp(n) {
+  return n == null ? "—" : `${Number(n).toLocaleString()} VP`;
+}
+
+function skinCard(item) {
+  const tierColor = item.tier ? item.tier.color : null;
+  const price = el("div", { class: "price" }, [
+    item.basePrice && item.basePrice !== item.price ? el("s", { text: vp(item.basePrice) }) : null,
+    vp(item.price),
+    item.discountPercent ? el("span", { class: "discount", text: `-${item.discountPercent}%` }) : null,
+  ]);
+  return el("div", { class: "card", style: tierColor ? `--tier:${tierColor}` : "" }, [
+    el("div", { class: "card-img" }, item.icon ? el("img", { src: item.icon, alt: item.name, loading: "lazy" }) : null),
+    el("div", { class: "card-body" }, [
+      el("div", {}, [
+        el("div", { class: "card-name", text: item.name }),
+        item.tier
+          ? el("div", { class: "card-tier" }, [el("img", { src: item.tier.icon, alt: "" }), item.tier.name])
+          : null,
+      ]),
+      price,
+    ]),
+  ]);
+}
+
+const timers = [];
+function startTimer(node, seconds) {
+  if (seconds == null) { node.textContent = ""; return; }
+  timers.push({ node, endsAt: Date.now() + seconds * 1000, prefix: "Resets in " });
+}
+setInterval(() => {
+  for (const t of timers) t.node.textContent = t.prefix + formatDuration((t.endsAt - Date.now()) / 1000);
+}, 1000);
+
+function renderShop(data) {
+  timers.length = 0;
+  $("account-name").textContent = data.account.name || "Riot account";
+
+  const wallet = $("wallet");
+  wallet.replaceChildren();
+  const labels = { vp: "VP", rp: "Radianite", kc: "Kingdom Credits" };
+  for (const key of ["vp", "rp", "kc"]) {
+    if (data.balances[key] != null) {
+      wallet.append(el("span", { class: "coin", text: `${data.balances[key].toLocaleString()} ${labels[key]}` }));
+    }
+  }
+
+  $("daily-grid").replaceChildren(...data.daily.offers.map(skinCard));
+  startTimer($("daily-timer"), data.daily.remainingSeconds);
+
+  const night = data.nightMarket;
+  $("night-section").classList.toggle("hidden", !night);
+  if (night) {
+    $("night-grid").replaceChildren(...night.offers.map(skinCard));
+    timers.push({ node: $("night-timer"), endsAt: Date.now() + (night.remainingSeconds || 0) * 1000, prefix: "Ends in " });
+  }
+
+  const bundles = $("bundles");
+  bundles.replaceChildren();
+  $("bundle-section").classList.toggle("hidden", !data.bundles.length);
+  for (const b of data.bundles) {
+    const timer = el("span", { class: "timer" });
+    if (b.remainingSeconds != null) timers.push({ node: timer, endsAt: Date.now() + b.remainingSeconds * 1000, prefix: "Leaves in " });
+    bundles.append(el("div", { class: "panel bundle" }, [
+      b.image ? el("img", { class: "bundle-img", src: b.image, alt: b.name }) : null,
+      el("div", { class: "bundle-info" }, [
+        el("div", {}, [el("h2", { text: b.name }), timer]),
+        el("div", { class: "price" }, [
+          b.basePrice && b.basePrice !== b.price ? el("s", { text: vp(b.basePrice) }) : null,
+          vp(b.price),
+        ]),
+      ]),
+      b.skins.length ? el("div", { class: "grid", style: "padding: 0 20px 20px" }, b.skins.map(skinCard)) : null,
+    ]));
+  }
+}
+
+function showView(signedIn) {
+  $("login-view").classList.toggle("hidden", signedIn);
+  $("shop-view").classList.toggle("hidden", !signedIn);
+  $("account-bar").classList.toggle("hidden", !signedIn);
+}
+
+async function fetchShop(session) {
+  const res = await fetch(SHOP_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(session),
+  });
+  const data = await res.json().catch(() => ({ error: "Unexpected response from the server." }));
+  if (!res.ok) {
+    const err = new Error(data.error || "Could not load your shop.");
+    err.status = res.status;
+    err.needRegion = data.needRegion;
+    throw err;
+  }
+  return data;
+}
+
+let loadGeneration = 0;
+
+async function load(session, statusNode) {
+  const generation = ++loadGeneration;
+  statusNode.className = "status";
+  statusNode.textContent = "Loading your shop…";
+  try {
+    const data = await fetchShop(session);
+    if (generation !== loadGeneration) return;
+    session.region = data.account.region;
+    saveSession(session);
+    localStorage.setItem(AUTO_KEY, "1");
+    renderShop(data);
+    showView(true);
+    $("shop-status").textContent = "";
+    $("login-status").textContent = "";
+  } catch (err) {
+    if (generation !== loadGeneration) return;
+    if (err.status === 401) {
+      localStorage.removeItem(STORAGE_KEY);
+      showView(false);
+      statusNode = $("login-status");
+    }
+    if (err.needRegion) $("region").focus();
+    statusNode.className = "status err";
+    statusNode.textContent = err.message;
+  }
+}
+
+$("load-btn").addEventListener("click", async () => {
+  const parsed = parseTokenUrl($("token-url").value);
+  const status = $("login-status");
+  if (!parsed) {
+    status.className = "status err";
+    status.textContent = "That link doesn't contain an access token. Copy the full address after signing in.";
+    return;
+  }
+  parsed.region = $("region").value;
+  $("load-btn").disabled = true;
+  await load(parsed, status);
+  $("load-btn").disabled = false;
+  if (loadSession()) $("token-url").value = "";
+});
+
+$("region").addEventListener("change", () => {
+  localStorage.setItem(REGION_KEY, $("region").value);
+  if (parseTokenUrl($("token-url").value)) $("load-btn").click();
+});
+
+$("refresh-btn").addEventListener("click", async () => {
+  const session = loadSession();
+  if (!session) { showView(false); autoSignIn(); return; }
+  $("refresh-btn").disabled = true;
+  await load(session, $("shop-status"));
+  $("refresh-btn").disabled = false;
+});
+
+$("logout-btn").addEventListener("click", () => {
+  loadGeneration++;
+  localStorage.removeItem(STORAGE_KEY);
+  localStorage.removeItem(AUTO_KEY);
+  showView(false);
+});
+
+function autoSignIn() {
+  if (!localStorage.getItem(AUTO_KEY)) return;
+  const status = $("login-status");
+  status.className = "status";
+  status.textContent = "Taking you to Riot sign-in… ";
+  const cancel = document.createElement("a");
+  cancel.href = "#";
+  cancel.textContent = "Cancel";
+  status.append(cancel);
+  const timer = setTimeout(() => location.assign(RIOT_LOGIN_URL), 1500);
+  cancel.addEventListener("click", (e) => {
+    e.preventDefault();
+    clearTimeout(timer);
+    status.textContent = "";
+  });
+}
+
+$("region").value = localStorage.getItem(REGION_KEY) || "auto";
+const fromRedirect = parseTokenUrl(location.hash);
+const existing = loadSession();
+if (fromRedirect) {
+  $("token-url").value = location.href;
+  history.replaceState(null, "", location.pathname);
+  fromRedirect.region = $("region").value;
+  load(fromRedirect, $("login-status")).then(() => {
+    if (loadSession()) $("token-url").value = "";
+  });
+} else if (existing) {
+  $("region").value = existing.region || "auto";
+  load(existing, $("login-status"));
+} else {
+  autoSignIn();
+}
+</script>
+</body>
+</html>
