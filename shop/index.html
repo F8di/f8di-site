@@ -355,11 +355,15 @@ async function fetchShop(session) {
   return data;
 }
 
+let loadGeneration = 0;
+
 async function load(session, statusNode) {
+  const generation = ++loadGeneration;
   statusNode.className = "status";
   statusNode.textContent = "Loading your shop…";
   try {
     const data = await fetchShop(session);
+    if (generation !== loadGeneration) return;
     session.region = data.account.region;
     saveSession(session);
     renderShop(data);
@@ -367,6 +371,7 @@ async function load(session, statusNode) {
     $("shop-status").textContent = "";
     $("login-status").textContent = "";
   } catch (err) {
+    if (generation !== loadGeneration) return;
     if (err.status === 401) {
       localStorage.removeItem(STORAGE_KEY);
       showView(false);
@@ -402,6 +407,7 @@ $("refresh-btn").addEventListener("click", async () => {
 });
 
 $("logout-btn").addEventListener("click", () => {
+  loadGeneration++;
   localStorage.removeItem(STORAGE_KEY);
   showView(false);
 });
