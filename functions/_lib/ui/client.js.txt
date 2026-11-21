@@ -330,7 +330,7 @@
       } catch (e) { toast(e.message, true); if (btn) btn.disabled = false; }
     };
     $("#go", root).onclick = run;
-    $("#q", root).onkeydown = (e) => e.key === "Enter" && run();
+    $("#q", root).onkeydown = (e) => { if (e.key === "Enter") run(); };
     $("#addref", root).onclick = () => { const v = $("#q", root).value.trim(); if (v) track(v); };
     const all = await api("games");
     root.append(grid("g1", [card(`Observed games (${all.games.length})`, table(GAME_COLS, all.games, { name: "observed-games", sort: "current", empty: "Discovery runs every 30 minutes and fills this table." }))]));
