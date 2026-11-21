@@ -143,6 +143,7 @@ details.step summary { cursor: pointer; font-size: 14px; }
         <div class="panel step">
           <h2><span class="step-num">2</span>Sign in with Riot</h2>
           <p>This opens Riot's official login page, so your password stays on Riot's site. After signing in you'll land on a Riot "404 Page not found" page. That's normal: just click the <strong>★ F8di Shop</strong> bookmark there and you'll come back here signed in.</p>
+          <p>Tick <strong>Stay signed in</strong> on Riot's page. After your first sign-in, opening this page takes you to Riot automatically, so you only click the bookmark.</p>
           <div class="row" style="margin-top: 0">
             <a class="btn val" id="riot-login">Sign in with Riot</a>
             <label class="muted" for="region">Region</label>
@@ -213,6 +214,7 @@ const RIOT_LOGIN_URL =
 const SHOP_ENDPOINT = "/api/valorant/shop";
 const STORAGE_KEY = "valorant-shop-session";
 const REGION_KEY = "valorant-shop-region";
+const AUTO_KEY = "valorant-shop-auto";
 
 const $ = (id) => document.getElementById(id);
 $("riot-login").href = RIOT_LOGIN_URL;
@@ -386,6 +388,7 @@ async function load(session, statusNode) {
     if (generation !== loadGeneration) return;
     session.region = data.account.region;
     saveSession(session);
+    localStorage.setItem(AUTO_KEY, "1");
     renderShop(data);
     showView(true);
     $("shop-status").textContent = "";
@@ -425,7 +428,7 @@ $("region").addEventListener("change", () => {
 
 $("refresh-btn").addEventListener("click", async () => {
   const session = loadSession();
-  if (!session) { showView(false); return; }
+  if (!session) { showView(false); autoSignIn(); return; }
   $("refresh-btn").disabled = true;
   await load(session, $("shop-status"));
   $("refresh-btn").disabled = false;
@@ -434,8 +437,26 @@ $("refresh-btn").addEventListener("click", async () => {
 $("logout-btn").addEventListener("click", () => {
   loadGeneration++;
   localStorage.removeItem(STORAGE_KEY);
+  localStorage.removeItem(AUTO_KEY);
   showView(false);
 });
+
+function autoSignIn() {
+  if (!localStorage.getItem(AUTO_KEY)) return;
+  const status = $("login-status");
+  status.className = "status";
+  status.textContent = "Taking you to Riot sign-in… ";
+  const cancel = document.createElement("a");
+  cancel.href = "#";
+  cancel.textContent = "Cancel";
+  status.append(cancel);
+  const timer = setTimeout(() => location.assign(RIOT_LOGIN_URL), 1500);
+  cancel.addEventListener("click", (e) => {
+    e.preventDefault();
+    clearTimeout(timer);
+    status.textContent = "";
+  });
+}
 
 $("region").value = localStorage.getItem(REGION_KEY) || "auto";
 const fromRedirect = parseTokenUrl(location.hash);
@@ -450,6 +471,8 @@ if (fromRedirect) {
 } else if (existing) {
   $("region").value = existing.region || "auto";
   load(existing, $("login-status"));
+} else {
+  autoSignIn();
 }
 </script>
 </body>
