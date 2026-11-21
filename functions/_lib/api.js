@@ -233,7 +233,10 @@ export async function handleApi(env, db, request, ctx, path) {
 
   if (a === "collectibles") {
     if (!b && m === "GET") {
-      const ids = (await all(db, "SELECT DISTINCT li.target_id AS id FROM list_items li JOIN lists l ON l.id = li.list_id WHERE l.kind = 'items'")).map((r) => r.id);
+      const list = url.searchParams.get("list");
+      const ids = list
+        ? (await all(db, "SELECT li.target_id AS id FROM list_items li JOIN lists l ON l.id = li.list_id WHERE l.kind = 'items' AND l.id = ?", id(list))).map((r) => r.id)
+        : (await all(db, "SELECT DISTINCT li.target_id AS id FROM list_items li JOIN lists l ON l.id = li.list_id WHERE l.kind = 'items'")).map((r) => r.id);
       return json({ items: await itemMetrics(db, ids) });
     }
     if (b === "search" && m === "GET") {

@@ -711,7 +711,7 @@ return Stats`;
     $("#lc", c).onclick = async () => { try { await api("lists", { method: "POST", body: { name: $("#ln", c).value, kind: $("#lk", c).value } }); render(); } catch (e) { toast(e.message, true); } };
     root.append(c);
     for (const l of ls) {
-      const members = l.kind === "games" ? (await api(`games?list=${l.id}`)).games : (await api("collectibles")).items;
+      const members = l.kind === "games" ? (await api(`games?list=${l.id}`)).games : (await api(`collectibles?list=${l.id}`)).items;
       const body = html(`<div><div class="row"><input class="in ref" placeholder="${l.kind === "games" ? "Game URL, place id, or u:<universe id>" : "Asset id"}"><button class="btn sm add">Add</button><span class="spacer"></span><button class="btn danger sm dl">Delete list</button></div><div class="tbl section"></div></div>`);
       const memberIds = l.kind === "items" ? new Set() : null;
       $(".tbl", body).append(l.kind === "games"
