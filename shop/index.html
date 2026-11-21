@@ -107,6 +107,7 @@ section { margin-top: 40px; }
 .bundle-img { width: 100%; display: block; max-height: 320px; object-fit: cover; }
 .bundle-info { padding: 18px 20px; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
 .bundle + .bundle { margin-top: 16px; }
+details.step summary { cursor: pointer; font-size: 14px; }
 .hidden { display: none !important; }
 </style>
 </head>
@@ -134,16 +135,16 @@ section { margin-top: 40px; }
 
       <div class="steps">
         <div class="panel step">
-          <h2><span class="step-num">1</span>Sign in with Riot</h2>
-          <p>This opens Riot's official login page in a new tab. Your password stays on Riot's site.</p>
-          <a class="btn val" id="riot-login" target="_blank" rel="noopener">Sign in with Riot ↗</a>
+          <h2><span class="step-num">1</span>Add the shop button to your bookmarks (one time)</h2>
+          <p>Drag this button onto your browser's bookmarks bar. If you don't see the bar, press Ctrl+Shift+B (Cmd+Shift+B on Mac).</p>
+          <a class="btn ghost" id="bookmarklet" title="Drag me to your bookmarks bar">★ F8di Shop</a>
         </div>
 
         <div class="panel step">
-          <h2><span class="step-num">2</span>Paste the link you land on</h2>
-          <p>After you sign in, Riot sends you to a playvalorant.com page. Copy the full address from the address bar (it starts with <code>https://playvalorant.com/</code> and contains <code>access_token=</code>) and paste it here.</p>
-          <textarea id="token-url" placeholder="https://playvalorant.com/opt_in#access_token=..." spellcheck="false" autocomplete="off"></textarea>
-          <div class="row">
+          <h2><span class="step-num">2</span>Sign in with Riot</h2>
+          <p>This opens Riot's official login page, so your password stays on Riot's site. After signing in you'll land on a Riot "404 Page not found" page. That's normal: just click the <strong>★ F8di Shop</strong> bookmark there and you'll come back here signed in.</p>
+          <div class="row" style="margin-top: 0">
+            <a class="btn val" id="riot-login">Sign in with Riot</a>
             <label class="muted" for="region">Region</label>
             <select id="region">
               <option value="auto">Auto-detect</option>
@@ -154,13 +155,21 @@ section { margin-top: 40px; }
               <option value="ap">Asia Pacific</option>
               <option value="kr">Korea</option>
             </select>
-            <button class="btn" id="load-btn" type="button">View my shop</button>
           </div>
           <div class="status" id="login-status"></div>
         </div>
+
+        <details class="panel step">
+          <summary class="muted">Can't use bookmarks (e.g. on a phone)? Paste the link instead</summary>
+          <p style="margin-top: 14px">On the Riot 404 page, copy the full address from the address bar (it contains <code>access_token=</code>) and paste it here.</p>
+          <textarea id="token-url" placeholder="https://playvalorant.com/en-us/opt_in/#access_token=..." spellcheck="false" autocomplete="off"></textarea>
+          <div class="row">
+            <button class="btn" id="load-btn" type="button">View my shop</button>
+          </div>
+        </details>
       </div>
 
-      <p class="note">Unofficial tool that uses Riot's unofficial store API. Not endorsed by Riot Games. Your login is kept only in this browser and expires after about an hour.</p>
+      <p class="note">Unofficial tool that uses Riot's unofficial store API. Not endorsed by Riot Games. Your login is kept only in this browser and expires after about an hour; then sign in again.</p>
     </div>
 
     <div id="shop-view" class="hidden">
@@ -206,6 +215,16 @@ const STORAGE_KEY = "valorant-shop-session";
 
 const $ = (id) => document.getElementById(id);
 $("riot-login").href = RIOT_LOGIN_URL;
+
+const BOOKMARKLET =
+  "javascript:(()=>{if(!location.hash.includes('access_token'))" +
+  "return alert('Sign in with Riot first, then click this on the page Riot sends you to.');" +
+  `location.href=${JSON.stringify(location.origin + "/shop/")}+location.hash})()`;
+$("bookmarklet").href = BOOKMARKLET;
+$("bookmarklet").addEventListener("click", (e) => {
+  e.preventDefault();
+  alert("Drag this button onto your bookmarks bar instead of clicking it.");
+});
 
 function loadSession() {
   try {
@@ -398,6 +417,10 @@ $("load-btn").addEventListener("click", async () => {
   if (loadSession()) $("token-url").value = "";
 });
 
+$("region").addEventListener("change", () => {
+  if (parseTokenUrl($("token-url").value)) $("load-btn").click();
+});
+
 $("refresh-btn").addEventListener("click", async () => {
   const session = loadSession();
   if (!session) { showView(false); return; }
@@ -412,8 +435,16 @@ $("logout-btn").addEventListener("click", () => {
   showView(false);
 });
 
+const fromRedirect = parseTokenUrl(location.hash);
 const existing = loadSession();
-if (existing) {
+if (fromRedirect) {
+  $("token-url").value = location.href;
+  history.replaceState(null, "", location.pathname);
+  fromRedirect.region = $("region").value;
+  load(fromRedirect, $("login-status")).then(() => {
+    if (loadSession()) $("token-url").value = "";
+  });
+} else if (existing) {
   $("region").value = existing.region || "auto";
   load(existing, $("login-status"));
 }
