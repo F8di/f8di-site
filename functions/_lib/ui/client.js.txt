@@ -130,7 +130,7 @@
   function lineChart(series, { height = 220, yFmt = compact, xFmt = dt, empty = "Not enough data yet. Charts fill in as snapshots are collected." } = {}) {
     const box = html(`<div class="chart"></div>`);
     const pts = series.flatMap((s) => s.points.filter((p) => isNum(p.v)));
-    if (pts.length < 2) {
+    if (!series.some((s) => s.points.filter((p) => isNum(p.v)).length >= 2)) {
       box.innerHTML = `<div class="empty">${esc(empty)}</div>`;
       return box;
     }
