@@ -1,0 +1,37 @@
+name: Stats collection
+
+# Cloudflare Pages Functions have no cron triggers, so this workflow calls the
+# protected collection endpoint on a schedule. It does nothing until both
+# repository secrets STATS_SITE_URL and STATS_CRON_TOKEN are set.
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: stats-collect
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Run queued collection jobs
+        env:
+          SITE: ${{ secrets.STATS_SITE_URL }}
+          TOKEN: ${{ secrets.STATS_CRON_TOKEN }}
+        run: |
+          if [ -z "$SITE" ] || [ -z "$TOKEN" ]; then
+            echo "STATS_SITE_URL / STATS_CRON_TOKEN not set; skipping."
+            exit 0
+          fi
+          for i in $(seq 1 12); do
+            out=$(curl -fsS -m 60 -X POST -H "Authorization: Bearer $TOKEN" "$SITE/stats/api/cron") || { echo "request failed"; exit 1; }
+            remaining=$(echo "$out" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("remaining", 0))')
+            echo "pass $i: $(echo "$out" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d["ran"]), "jobs,", sum(1 for j in d["ran"] if not j["ok"]), "failed")'), $remaining queued"
+            [ "$remaining" = "0" ] && break
+            sleep 5
+          done
