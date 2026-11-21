@@ -40,7 +40,7 @@ async function riot(url, init, step) {
 
 async function detectRegion(accessToken, idToken) {
   try {
-    const res = await fetch("https://riot-geo.pp.riotgames.com/pas/v1/product/valorant", {
+    const res = await fetch("https://riot-geo.pas.si.riotgames.com/pas/v1/product/valorant", {
       method: "PUT",
       headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
       body: JSON.stringify({ id_token: idToken }),
