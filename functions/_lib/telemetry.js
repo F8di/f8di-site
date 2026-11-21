@@ -84,11 +84,12 @@ export async function experienceAnalytics(db, expId, from, to) {
   const custom = await events(db, expId, "custom", from, to);
 
   const dau = new Map();
-  const firstSeen = new Map();
+  // First-ever session per player, over all history, so returning players aren't counted as new.
+  const firstRows = await all(db, "SELECT player, MIN(ts) AS ts FROM telemetry_events WHERE experience_id = ? AND type = 'session_start' AND ts <= ? GROUP BY player", expId, to);
+  const firstSeen = new Map(firstRows.map((r) => [r.player, dayKey(r.ts)]));
   const activeDays = new Map();
   for (const s of starts) {
     const d = dayKey(s.ts);
-    if (!firstSeen.has(s.player)) firstSeen.set(s.player, d);
     (activeDays.get(s.player) || activeDays.set(s.player, new Set()).get(s.player)).add(d);
     if (s.ts >= from) (dau.get(d) || dau.set(d, new Set()).get(d)).add(s.player);
   }
@@ -107,7 +108,10 @@ export async function experienceAnalytics(db, expId, from, to) {
     pr.buyers.add(p.player);
     products.set(k, pr);
   }
-  const days = [...new Set([...dau.keys(), ...revenue.keys()])].sort();
+  // Every calendar day from the first day with data to the end of the range, so inactive days count as zero.
+  const seenDays = [...new Set([...dau.keys(), ...revenue.keys()])].sort();
+  const days = [];
+  if (seenDays.length) for (let t = Date.parse(seenDays[0]); t <= Math.min(to, Date.now()); t += DAY) days.push(dayKey(t));
   const daily = days.map((d) => {
     const users = dau.get(d)?.size || 0;
     const pay = payers.get(d)?.size || 0;
@@ -116,7 +120,7 @@ export async function experienceAnalytics(db, expId, from, to) {
   });
   const retention = [];
   const cohorts = new Map();
-  for (const [player, d] of firstSeen) if (Date.parse(d) >= from - 30 * DAY) (cohorts.get(d) || cohorts.set(d, []).get(d)).push(player);
+  for (const [player, d] of firstSeen) if (Date.parse(d) >= from - 30 * DAY && activeDays.has(player)) (cohorts.get(d) || cohorts.set(d, []).get(d)).push(player);
   for (const [d, players] of [...cohorts].sort()) {
     const r = { cohort: d, size: players.length };
     for (const n of [1, 7, 30]) {
