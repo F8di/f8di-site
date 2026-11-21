@@ -514,16 +514,20 @@ local KEY = "${key}"
 local TOKEN = "${token || "<paste token>"}"
 
 local Stats, queue, sessions = {}, {}, {}
+local flushing = false
 
 local function push(event)
   event.ts = os.time()
+  event.id = HttpService:GenerateGUID(false) -- lets the server ignore events resent after a failed response
   table.insert(queue, event)
 end
 
 function Stats.flush()
+  if flushing then return end
+  flushing = true
   while #queue > 0 do
     local batch = {}
-    for i = 1, math.min(200, #queue) do batch[i] = queue[i] end -- the endpoint accepts at most 200 events per request
+    for i = 1, math.min(200, #queue) do batch[i] = table.remove(queue, 1) end -- at most 200 events per request
     local ok, res = pcall(function()
       return HttpService:RequestAsync({
         Url = ENDPOINT, Method = "POST",
@@ -533,10 +537,11 @@ function Stats.flush()
     end)
     if not ok or not res.Success then
       warn("F8diStats flush failed: " .. tostring(ok and res.StatusCode or res))
-      return -- keep the queue and retry on the next flush
+      for i = #batch, 1, -1 do table.insert(queue, 1, batch[i]) end -- put back and retry on the next flush
+      break
     end
-    for _ = 1, #batch do table.remove(queue, 1) end
   end
+  flushing = false
 end
 
 function Stats.purchase(player, kind, name, robux) push({ type = "purchase", player = player.UserId, source = kind, name = name, amount = robux }) end -- kind: "product" | "gamepass"
@@ -564,7 +569,11 @@ task.spawn(function()
     Stats.flush()
   end
 end)
-game:BindToClose(Stats.flush)
+game:BindToClose(function()
+  local waited = 0
+  while flushing and waited < 5 do waited += task.wait(0.1) end
+  Stats.flush()
+end)
 
 return Stats`;
   }

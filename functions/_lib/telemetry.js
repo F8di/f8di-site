@@ -61,14 +61,16 @@ export async function ingest(env, db, request) {
     // Player ids are pseudonymised before storage.
     const player = e.player !== undefined ? (await sha256Hex(`${env.STATS_SESSION_SECRET}|player|${exp.id}|${e.player}`)).slice(0, 16) : null;
     stmts.push(
-      db.prepare("INSERT INTO telemetry_events (experience_id, ts, type, player, session, name, amount, currency, source, rarity, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(
-        exp.id, ts, e.type, player, str(e.session, 40), str(e.name, 120), num(e.amount ?? e.value), str(e.currency, 40), str(e.source, 80), str(e.rarity, 40), e.data ? JSON.stringify(e.data).slice(0, 1000) : null
+      // event_id makes retried batches idempotent: duplicates are ignored by the unique index.
+      db.prepare("INSERT OR IGNORE INTO telemetry_events (experience_id, ts, type, player, session, name, amount, currency, source, rarity, data, event_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(
+        exp.id, ts, e.type, player, str(e.session, 40), str(e.name, 120), num(e.amount ?? e.value), str(e.currency, 40), str(e.source, 80), str(e.rarity, 40), e.data ? JSON.stringify(e.data).slice(0, 1000) : null, str(e.id, 64)
       )
     );
   }
-  await batch(db, stmts);
+  const results = await batch(db, stmts);
+  const inserted = results.reduce((s, r) => s + (r.meta?.changes || 0), 0);
   await run(db, "UPDATE experiences SET last_event_at = ? WHERE id = ?", t, exp.id);
-  return { accepted: stmts.length, dropped: events.length - stmts.length };
+  return { accepted: stmts.length, inserted, duplicates: stmts.length - inserted, dropped: events.length - stmts.length };
 }
 
 async function events(db, expId, type, from, to) {

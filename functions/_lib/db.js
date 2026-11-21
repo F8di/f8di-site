@@ -1,6 +1,6 @@
 import { SCHEMA_SQL as schemaSql } from "./schema.js";
 
-export const SCHEMA_VERSION = "1";
+export const SCHEMA_VERSION = "2";
 let schemaReady = false;
 
 export function getDb(env) {
@@ -15,6 +15,7 @@ export async function ensureSchema(db) {
       schemaReady = true;
       return;
     }
+    if (row?.value === "1") await db.prepare("ALTER TABLE telemetry_events ADD COLUMN event_id TEXT").run().catch(() => {});
   } catch {
     // meta table missing: fall through and create everything
   }
