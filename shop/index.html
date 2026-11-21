@@ -212,6 +212,7 @@ const RIOT_LOGIN_URL =
   "&client_id=play-valorant-web-prod&response_type=token%20id_token&nonce=1&scope=account%20openid";
 const SHOP_ENDPOINT = "/api/valorant/shop";
 const STORAGE_KEY = "valorant-shop-session";
+const REGION_KEY = "valorant-shop-region";
 
 const $ = (id) => document.getElementById(id);
 $("riot-login").href = RIOT_LOGIN_URL;
@@ -418,6 +419,7 @@ $("load-btn").addEventListener("click", async () => {
 });
 
 $("region").addEventListener("change", () => {
+  localStorage.setItem(REGION_KEY, $("region").value);
   if (parseTokenUrl($("token-url").value)) $("load-btn").click();
 });
 
@@ -435,6 +437,7 @@ $("logout-btn").addEventListener("click", () => {
   showView(false);
 });
 
+$("region").value = localStorage.getItem(REGION_KEY) || "auto";
 const fromRedirect = parseTokenUrl(location.hash);
 const existing = loadSession();
 if (fromRedirect) {
