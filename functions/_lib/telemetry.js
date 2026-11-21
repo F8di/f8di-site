@@ -1,6 +1,6 @@
 // Telemetry sent by the owner's own Roblox experiences (HttpService), plus analytics built on it.
 import { all, batch, first, run } from "./db.js";
-import { DAY, HttpError, dayKey, mean, now, randomToken, safeEqual, sha256Hex, stdev } from "./util.js";
+import { DAY, HttpError, dayKey, mean, median, now, randomToken, safeEqual, sha256Hex, stdev } from "./util.js";
 
 const TYPES = new Set(["session_start", "session_end", "purchase", "currency", "item", "progress", "error", "perf", "custom"]);
 const MAX_EVENTS = 200;
@@ -151,7 +151,7 @@ export async function experienceAnalytics(db, expId, from, to) {
       avgDau: mean(daily.map((d) => d.dau)),
       sessions: starts.filter((s) => s.ts >= from).length,
       avgSessionSec: mean(durations),
-      medianSessionSec: durations.length ? durations.sort((a, b) => a - b)[durations.length >> 1] : null,
+      medianSessionSec: median(durations),
       revenue: totalRevenue,
       payers: totalPayers,
       conversion: totalUsers ? totalPayers / totalUsers : null,
