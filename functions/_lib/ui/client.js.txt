@@ -521,17 +521,22 @@ local function push(event)
 end
 
 function Stats.flush()
-  if #queue == 0 then return end
-  local batch = queue
-  queue = {}
-  local ok, err = pcall(function()
-    HttpService:RequestAsync({
-      Url = ENDPOINT, Method = "POST",
-      Headers = { ["Content-Type"] = "application/json", ["X-Experience-Key"] = KEY, ["Authorization"] = "Bearer " .. TOKEN },
-      Body = HttpService:JSONEncode({ events = batch }),
-    })
-  end)
-  if not ok then warn("F8diStats flush failed: " .. tostring(err)) end
+  while #queue > 0 do
+    local batch = {}
+    for i = 1, math.min(200, #queue) do batch[i] = queue[i] end -- the endpoint accepts at most 200 events per request
+    local ok, res = pcall(function()
+      return HttpService:RequestAsync({
+        Url = ENDPOINT, Method = "POST",
+        Headers = { ["Content-Type"] = "application/json", ["X-Experience-Key"] = KEY, ["Authorization"] = "Bearer " .. TOKEN },
+        Body = HttpService:JSONEncode({ events = batch }),
+      })
+    end)
+    if not ok or not res.Success then
+      warn("F8diStats flush failed: " .. tostring(ok and res.StatusCode or res))
+      return -- keep the queue and retry on the next flush
+    end
+    for _ = 1, #batch do table.remove(queue, 1) end
+  end
 end
 
 function Stats.purchase(player, kind, name, robux) push({ type = "purchase", player = player.UserId, source = kind, name = name, amount = robux }) end -- kind: "product" | "gamepass"

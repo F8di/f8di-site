@@ -48,7 +48,9 @@ export async function ingest(env, db, request) {
   } catch {
     throw new HttpError(400, "Invalid JSON");
   }
-  const events = Array.isArray(body?.events) ? body.events.slice(0, MAX_EVENTS) : [];
+  const received = Array.isArray(body?.events) ? body.events : [];
+  if (received.length > MAX_EVENTS) throw new HttpError(413, `At most ${MAX_EVENTS} events per request`);
+  const events = received;
   const t = now();
   const str = (v, n = 80) => (v === undefined || v === null ? null : String(v).slice(0, n));
   const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
