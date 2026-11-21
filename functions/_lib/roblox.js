@@ -141,7 +141,8 @@ export async function fetchExploreSorts(pages = 2) {
 
 let catalogCsrf = "";
 async function catalogPost(url, body) {
-  for (let attempt = 0; attempt < 3; attempt++) {
+  // Roblox issues per-server CSRF tokens behind a load balancer, so a fresh token can be rejected by the next server.
+  for (let attempt = 0; attempt < 8; attempt++) {
     const res = await fetch(url, {
       method: "POST",
       headers: { "User-Agent": UA, "Content-Type": "application/json", Accept: "application/json", "X-CSRF-TOKEN": catalogCsrf },
