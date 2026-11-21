@@ -165,7 +165,7 @@ async function collectGames(env, db, { ids, raw }) {
   if (neverResolved.length) {
     // Ids Roblox doesn't recognise (bad input or deleted games) are dropped instead of retried forever.
     const ph = neverResolved.map(() => "?").join(",");
-    await batch(db, [db.prepare(`DELETE FROM list_items WHERE target_id IN (${ph})`).bind(...neverResolved), db.prepare(`DELETE FROM games WHERE name IS NULL AND universe_id IN (${ph})`).bind(...neverResolved)]);
+    await batch(db, [db.prepare(`DELETE FROM list_items WHERE target_id IN (${ph}) AND list_id IN (SELECT id FROM lists WHERE kind = 'games')`).bind(...neverResolved), db.prepare(`DELETE FROM games WHERE name IS NULL AND universe_id IN (${ph})`).bind(...neverResolved)]);
   }
   if (missing.length === ids.length && neverResolved.length < missing.length) throw new Error(`Roblox returned no data for ${missing.length} universes`);
   return data.size;
