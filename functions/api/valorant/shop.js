@@ -29,7 +29,7 @@ function json(data, status = 200) {
 async function riot(url, init, step) {
   const res = await fetch(url, init);
   if ([400, 401, 403].includes(res.status)) {
-    throw new HttpError(401, "Riot rejected your login (it expires after about an hour). Sign in again.");
+    throw new HttpError(401, `Riot rejected your login (${step}, ${res.status}). It expires after about an hour; sign in again.`);
   }
   if (!res.ok) {
     const hint = res.status === 404 ? " Check that the right region is selected." : "";
