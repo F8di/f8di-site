@@ -5,6 +5,8 @@ export const SESSION_COOKIE = "__Host-f8di_stats";
 export const LOGIN_CSRF_COOKIE = "__Host-f8di_stats_login";
 const SESSION_ABSOLUTE_MS = 12 * HOUR;
 const SESSION_IDLE_MS = 2 * HOUR;
+const REMEMBER_ABSOLUTE_MS = 30 * 24 * HOUR;
+const REMEMBER_IDLE_MS = 7 * 24 * HOUR;
 const MAX_FAILS_PER_IP = 5;
 const MAX_FAILS_GLOBAL = 25;
 const FAIL_WINDOW_MS = 15 * 60_000;
@@ -94,7 +96,7 @@ export async function recordAttempt(db, ipHash, ok) {
   await run(db, "INSERT INTO auth_attempts (key, ts, ok) VALUES (?, ?, ?)", ipHash, now(), ok ? 1 : 0);
 }
 
-export async function attemptLogin(env, db, request, { username, password, code }) {
+export async function attemptLogin(env, db, request, { username, password, code, remember }) {
   const ipHash = await ipKey(env, request);
   if (await loginThrottled(db, ipHash)) return { ok: false, throttled: true };
   // Always run every check so timing does not reveal which factor failed.
@@ -111,11 +113,12 @@ export async function attemptLogin(env, db, request, { username, password, code 
   const ok = userOk && passOk && totpOk;
   await recordAttempt(db, ipHash, ok);
   if (!ok) return { ok: false };
-  const session = await createSession(env, db, request, ipHash);
+  const session = await createSession(env, db, request, ipHash, remember);
   return { ok: true, session };
 }
 
-export async function createSession(env, db, request, ipHash) {
+export async function createSession(env, db, request, ipHash, remember = false) {
+  const lifetime = remember ? REMEMBER_ABSOLUTE_MS : SESSION_ABSOLUTE_MS;
   const token = randomToken(32);
   const csrf = randomToken(24);
   const t = now();
@@ -126,11 +129,11 @@ export async function createSession(env, db, request, ipHash) {
     csrf,
     t,
     t,
-    t + SESSION_ABSOLUTE_MS,
+    t + lifetime,
     ipHash,
     (request.headers.get("User-Agent") || "").slice(0, 200)
   );
-  return { token, csrf, cookie: cookie(SESSION_COOKIE, token, { maxAge: SESSION_ABSOLUTE_MS / 1000 }) };
+  return { token, csrf, cookie: cookie(SESSION_COOKIE, token, { maxAge: lifetime / 1000 }) };
 }
 
 export async function getSession(env, db, request) {
@@ -140,12 +143,14 @@ export async function getSession(env, db, request) {
   const row = await first(db, "SELECT * FROM sessions WHERE id_hash = ?", idHash);
   const t = now();
   if (!row) return null;
-  if (row.expires_at < t || row.last_seen_at + SESSION_IDLE_MS < t) {
+  // "Stay signed in" sessions are the ones created with the longer lifetime.
+  const idleMs = row.expires_at - row.created_at > SESSION_ABSOLUTE_MS ? REMEMBER_IDLE_MS : SESSION_IDLE_MS;
+  if (row.expires_at < t || row.last_seen_at + idleMs < t) {
     await run(db, "DELETE FROM sessions WHERE id_hash = ?", idHash);
     return null;
   }
   if (t - row.last_seen_at > 60_000) await run(db, "UPDATE sessions SET last_seen_at = ? WHERE id_hash = ?", t, idHash);
-  return { idHash, csrf: row.csrf, createdAt: row.created_at, expiresAt: row.expires_at, idleExpiresAt: t + SESSION_IDLE_MS };
+  return { idHash, csrf: row.csrf, createdAt: row.created_at, expiresAt: row.expires_at, idleExpiresAt: Math.min(row.expires_at, t + idleMs) };
 }
 
 export async function destroySession(db, idHash) {
