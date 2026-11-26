@@ -1,9 +1,9 @@
-import { all, first, getMeta, run } from "./db.js";
-import { compareSeries, gameDetail, leaderboards, loadMetrics, opportunityResearch, itemMetrics } from "./analytics.js";
+import { all, first, getMeta, run, setMeta } from "./db.js";
+import { compareSeries, coverage, creatorLeaderboard, gameDetail, leaderboards, loadMetrics, opportunityResearch, itemMetrics } from "./analytics.js";
 import { ALERT_METRICS, enqueue, forceSchedule, queueStatus, retryFailed, settings, tick } from "./collector.js";
 import { REPORT_TYPES, generateReport } from "./reports.js";
 import { createExperience, economyAnalytics, experienceAnalytics, rotateToken } from "./telemetry.js";
-import { fetchItemDetails, openCloudUniverse, resolveGameRef, searchCatalog, searchGames } from "./roblox.js";
+import { fetchBadges, fetchGamePasses, fetchItemDetails, lookupGroup, lookupUser, openCloudUniverse, popularCollectibles, resolveGameRef, searchCatalog, searchGames } from "./roblox.js";
 import { destroyAllSessions, listSessions } from "./auth.js";
 import { STATE_COOKIE, accountStatus, disconnect, oauthConfig, officialMetrics, refreshResources, startConnect, syncOfficial } from "./robloxAccount.js";
 import { DAY, HttpError, cookie, intParam, json, now, rangeFrom } from "./util.js";
@@ -115,8 +115,46 @@ function toCsv(rows) {
   return [cols.join(","), ...rows.map((r) => cols.map((c) => esc(r[c])).join(","))].join("\n");
 }
 
+// First-run starter set so the tracked-game and collectible pages have data without manual setup.
+// Runs once; removing the items afterwards is respected.
+export async function seedStarter(db) {
+  if ((await getMeta(db, "starter_v1")) === "1") return { games: 0, items: 0 };
+  const ms = (await loadMetrics(db)).sort((a, b) => (b.current || 0) - (a.current || 0));
+  if (!ms.length) return { games: 0, items: 0 };
+  await run(db, "INSERT OR REPLACE INTO meta (key, value) VALUES ('starter_v1', '1')");
+  const out = { games: 0, items: 0 };
+  const hasGames = await first(db, "SELECT 1 AS x FROM list_items li JOIN lists l ON l.id = li.list_id WHERE l.kind = 'games' LIMIT 1");
+  const tracking = await first(db, "SELECT id FROM lists WHERE kind = 'games' ORDER BY id LIMIT 1");
+  if (!hasGames && tracking) {
+    const top = ms.slice(0, 12).map((m) => m.universeId);
+    for (const u of top) await addToList(db, tracking.id, u);
+    await enqueue(db, "collect_games", { ids: top, raw: true });
+    out.games = top.length;
+  }
+  const hasItems = await first(db, "SELECT 1 AS x FROM list_items li JOIN lists l ON l.id = li.list_id WHERE l.kind = 'items' LIMIT 1");
+  const watch = await first(db, "SELECT id FROM lists WHERE kind = 'items' ORDER BY id LIMIT 1");
+  if (!hasItems && watch) {
+    try {
+      const items = (await popularCollectibles()).filter((i) => i.lowestResalePrice > 0).slice(0, 10);
+      for (const i of items) {
+        await run(db, "INSERT OR IGNORE INTO items (asset_id, name, first_seen_at) VALUES (?, ?, ?)", i.assetId, i.name, now());
+        await addToList(db, watch.id, i.assetId);
+      }
+      const ids = items.map((i) => i.assetId);
+      if (ids.length) {
+        await enqueue(db, "collect_items", { ids });
+        await enqueue(db, "item_resale", { ids });
+      }
+      out.items = ids.length;
+    } catch { /* catalog unavailable: games are still seeded */ }
+  }
+  return out;
+}
+
 async function overview(env, db, ctx) {
   const t = now();
+  const seeded = await seedStarter(db).catch(() => ({ games: 0, items: 0 }));
+  if (seeded.games || seeded.items) await setMeta(db, "last_tick_at", 0).catch(() => {});
   const lastTick = Number(await getMeta(db, "last_tick_at")) || 0;
   if (t - lastTick > 10 * 60_000) ctx.waitUntil(tick(env, { budgetMs: 25_000 }).catch(() => {}));
   const counts = await first(
@@ -145,7 +183,7 @@ export async function handleApi(env, db, request, ctx, path) {
   const [a, b, c, d] = seg;
 
   if (a === "overview" && m === "GET") return json(await overview(env, db, ctx));
-  if (a === "status" && m === "GET") return json({ config: configStatus(env), queue: await queueStatus(db), metricsComputedAt: Number(await getMeta(db, "metrics_computed_at")) || null });
+  if (a === "status" && m === "GET") return json({ config: configStatus(env), queue: await queueStatus(db), coverage: await coverage(db), metricsComputedAt: Number(await getMeta(db, "metrics_computed_at")) || null });
 
   if (a === "search" && m === "GET") {
     const q = (url.searchParams.get("q") || "").trim().slice(0, 100);
@@ -178,12 +216,25 @@ export async function handleApi(env, db, request, ctx, path) {
       ctx.waitUntil(tick(env, { budgetMs: 15_000, maxJobs: 3 }).catch(() => {}));
       return json({ universeId });
     }
+    if (b && c === "store" && m === "GET") {
+      const [passes, badges] = await Promise.all([fetchGamePasses(id(b)).catch(() => null), fetchBadges(id(b)).catch(() => null)]);
+      return json({ passes, badges, fetchedAt: now() });
+    }
     if (b && m === "GET") {
       const { from, to } = rangeFrom(url);
       const detail = await gameDetail(db, id(b), from, to);
       if (!detail) throw new HttpError(404, "Game not tracked or observed yet");
       return json(detail);
     }
+  }
+
+  if (a === "creators" && m === "GET") return json({ creators: (await creatorLeaderboard(db)).slice(0, 300) });
+  if (a === "lookup" && m === "GET") {
+    const q = (url.searchParams.get("q") || "").trim().slice(0, 120);
+    if (!q) throw new HttpError(400, "Enter a username, id or profile link");
+    const res = b === "group" ? await lookupGroup(q) : b === "user" ? await lookupUser(q) : null;
+    if (!res) throw new HttpError(404, b === "group" ? "Group not found" : "User not found");
+    return json({ result: res, fetchedAt: now() });
   }
 
   if (a === "compare" && m === "GET") {
@@ -240,6 +291,10 @@ export async function handleApi(env, db, request, ctx, path) {
         ? (await all(db, "SELECT li.target_id AS id FROM list_items li JOIN lists l ON l.id = li.list_id WHERE l.kind = 'items' AND l.id = ?", id(list))).map((r) => r.id)
         : (await all(db, "SELECT DISTINCT li.target_id AS id FROM list_items li JOIN lists l ON l.id = li.list_id WHERE l.kind = 'items'")).map((r) => r.id);
       return json({ items: await itemMetrics(db, ids) });
+    }
+    if (b === "popular" && m === "GET") {
+      const watched = new Set((await all(db, "SELECT DISTINCT li.target_id AS id FROM list_items li JOIN lists l ON l.id = li.list_id WHERE l.kind = 'items'")).map((r) => r.id));
+      return json({ items: (await popularCollectibles()).map((i) => ({ ...i, watched: watched.has(i.assetId) })), fetchedAt: now() });
     }
     if (b === "search" && m === "GET") {
       const q = (url.searchParams.get("q") || "").trim().slice(0, 100);

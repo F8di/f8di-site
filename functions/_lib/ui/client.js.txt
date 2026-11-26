@@ -211,7 +211,7 @@
     { k: "name", label: "Game", fmt: (_, r) => gameLink(r), text: (r) => r.name },
     { k: "current", label: "Players", num: true, fmt: (v) => num(v) },
     { k: "avg24", label: "Avg 24h", num: true, fmt: (v) => num(v) },
-    { k: "growth24", label: "24h", num: true, fmt: delta },
+    { k: "growth24", label: "24h", num: true, fmt: (v, r) => delta(v) + (r.growthBasis && r.growthBasis !== "hourly" ? `<span class="muted" title="Estimate from single samples at the same time of day, because hourly collection had gaps">*</span>` : "") },
     { k: "growth7", label: "7d", num: true, fmt: delta },
     { k: "acceleration", label: "Accel.", num: true, fmt: delta },
     { k: "baselineRatio", label: "vs base", num: true, fmt: (v) => (isNum(v) ? `${v.toFixed(2)}x` : "–") },
@@ -247,6 +247,10 @@
       card("Concurrent players across observed pool (7d, hourly)", lineChart([{ name: "Players", points: d.poolSeries.map((p) => ({ t: p.ts, v: p.playing })) }])),
       card("Fastest growing (24h)", table(GAME_COLS.filter((c) => ["name", "current", "growth24", "confidence"].includes(c.k)), d.leaderboards.fastestGrowing, { noTools: true, empty: "Needs about 24h of snapshots to rank growth." })),
     ]));
+    root.append(grid("g2", [
+      card("Top games right now", bars(d.leaderboards.topNow.slice(0, 8).map((x) => ({ label: x.name, value: x.current })), num), `<a class="small" href="#/trends/topNow">All</a>`),
+      card("Gaining visits fastest (per hour)", table([GAME_COLS[0], GAME_COLS[7], GAME_COLS[1]], d.leaderboards.mostVisited, { noTools: true, empty: "Needs two collections about a day apart." })),
+    ]));
     root.append(grid("g3", [
       card("Unexpected breakouts", table(GAME_COLS.filter((c) => ["name", "current", "baselineRatio"].includes(c.k)), d.leaderboards.unexpectedBreakouts, { noTools: true, empty: "Needs several days of history." })),
       card("Biggest declines", table(GAME_COLS.filter((c) => ["name", "current", "growth24"].includes(c.k)), d.leaderboards.biggestDeclines, { noTools: true })),
@@ -270,11 +274,11 @@
 
   VIEWS.trends = async (tab = "fastestGrowing") => {
     const d = await api("trends?limit=50");
-    const TABS = { fastestGrowing: "Fastest growing", emerging: "Emerging", newReleases: "New releases", newlyDiscovered: "Newly discovered", biggestDeclines: "Biggest declines", mostConsistent: "Most consistent", unexpectedBreakouts: "Unexpected breakouts", acceleration: "Accelerating", opportunities: "Opportunity score", trendingGenres: "Trending genres" };
+    const TABS = { topNow: "Top right now", fastestGrowing: "Fastest growing", emerging: "Emerging", newReleases: "New releases", newlyDiscovered: "Newly discovered", biggestDeclines: "Biggest declines", mostConsistent: "Most consistent", unexpectedBreakouts: "Unexpected breakouts", acceleration: "Accelerating", opportunities: "Opportunity score", mostVisited: "Most visits/hour", mostFavorited: "Most favorites/hour", bestRated: "Best rated", trendingGenres: "Trending genres" };
     const root = html(`<div><div class="tabs">${Object.entries(TABS).map(([k, v]) => `<button data-t="${k}" class="${k === tab ? "on" : ""}">${esc(v)}</button>`).join("")}</div></div>`);
     $$(".tabs button", root).forEach((b) => (b.onclick = () => (location.hash = `#/trends/${b.dataset.t}`)));
     if (tab === "trendingGenres") root.append(table(GENRE_COLS, d.trendingGenres, { name: "trending-genres" }));
-    else root.append(table(GAME_COLS, d[tab] || [], { name: tab, sort: ["fastestGrowing", "biggestDeclines", "mostConsistent", "unexpectedBreakouts"].includes(tab) ? null : undefined, empty: "Not enough history to rank yet. Rankings need roughly 24 hours (growth) to 7 days (baselines, consistency) of snapshots." }));
+    else root.append(table(tab === "bestRated" || tab === "mostFavorited" ? [...GAME_COLS.slice(0, 4), { k: "likeRatio", label: "Like ratio", num: true, fmt: (v) => pctPlain(v) }, { k: "favPerHour", label: "Favs/h", num: true, fmt: (v) => num(v, 1) }, ...GAME_COLS.slice(7)] : GAME_COLS, d[tab] || [], { name: tab, sort: ["fastestGrowing", "biggestDeclines", "mostConsistent", "unexpectedBreakouts"].includes(tab) ? null : undefined, empty: "Not enough history to rank yet. Rankings need roughly 24 hours (growth) to 7 days (baselines, consistency) of snapshots." }));
     root.append(card("How rankings work", `<div class="small muted">
       <p><b>Growth</b> compares average concurrent players in the last 24h against the 24h before (denominator floored at 20 players). <b>Acceleration</b> is yesterday's day-over-day growth minus the previous day's. <b>vs base</b> is current players divided by the median daily average of the previous 7 days. Breakouts need 2.5x baseline or a 3-sigma deviation.</p>
       <p class="section"><b>Sustained growth</b> requires 24h growth over 25%, 7-day growth over 15% and rising daily averages on at least 60% of the last 14 days; otherwise a jump is labelled a <b>spike</b>. Total visits are lifetime counters and are never used as player activity; visits/hour is shown separately.</p>
@@ -370,6 +374,19 @@
     ]));
     root.append(grid("g1", [card("Major changes and investigation", d.events.length ? d.events.map(eventHtml).join("") : `<div class="empty">No major changes detected. Investigations run automatically for tracked games when activity moves sharply.</div>`)]));
     root.append(grid("g1", [card("Daily history", table([{ k: "day", label: "Day" }, { k: "avg_playing", label: "Avg players", num: true, fmt: (v) => num(v) }, { k: "peak_playing", label: "Peak", num: true, fmt: (v) => num(v) }, { k: "visits", label: "Visits", num: true, fmt: (v) => num(v) }, { k: "favorites", label: "Favorites", num: true, fmt: (v) => num(v) }], d.daily, { name: `game-${id}-daily`, sort: "day" }))]));
+    const store = card("Game passes and badges (live from Roblox)", `<div class="loading">Loading…</div>`);
+    root.append(grid("g1", [store]));
+    api(`games/${id}/store`).then((st) => {
+      store.lastElementChild.remove();
+      const passes = st.passes || [], badges = st.badges || [];
+      const priced = passes.filter((x) => x.forSale && isNum(x.price));
+      store.insertAdjacentHTML("beforeend", `<div class="muted small">${st.passes ? `${passes.length} game pass(es), ${priced.length} on sale${priced.length ? `, R$${num(Math.min(...priced.map((x) => x.price)))} to R$${num(Math.max(...priced.map((x) => x.price)))}, median R$${num(priced.map((x) => x.price).sort((a, b) => a - b)[Math.floor(priced.length / 2)])}` : ""}` : "Game passes unavailable from Roblox"} · ${st.badges ? `${badges.length} badge(s)` : "badges unavailable"}. Developer products and sales counts are not public.</div>`);
+      const g2 = grid("g2", [
+        card("Game passes", table([{ k: "name", label: "Pass" }, { k: "price", label: "Price (R$)", num: true, fmt: (v) => num(v) }, { k: "forSale", label: "On sale", fmt: (v) => (v ? "Yes" : "No") }], passes, { name: `game-${id}-passes`, sort: "price", empty: "No game passes.", limit: 100 })),
+        card("Badges", table([{ k: "name", label: "Badge" }, { k: "awarded", label: "Awarded", num: true, fmt: (v) => compact(v) }, { k: "awardedYesterday", label: "Yesterday", num: true, fmt: (v) => compact(v) }, { k: "winRate", label: "Win rate", num: true, fmt: (v) => pctPlain(v) }], badges, { name: `game-${id}-badges`, sort: "awarded", empty: "No badges.", limit: 100 })),
+      ]);
+      store.append(g2);
+    }).catch((e) => { store.lastElementChild.outerHTML = `<div class="empty down">${esc(e.message)}</div>`; });
     root.append(grid("g1", [alertForm("game", g.universe_id, g.name)]));
     return root;
   };
@@ -475,6 +492,12 @@
       } catch (e) { $("#cres", s).innerHTML = `<div class="empty down">${esc(e.message)}</div>`; }
     };
     $("#cadd", s).onclick = () => { const v = Number($("#cq", s).value.trim()); if (v) add(v); };
+    const pop = card("Popular limiteds right now (most favorited, live from Roblox)", `<div class="loading">Loading…</div>`);
+    root.append(grid("g1", [pop]));
+    api("collectibles/popular").then((r) => {
+      pop.lastElementChild.remove();
+      pop.append(table([{ k: "name", label: "Item", fmt: (v, x) => `<a href="https://www.roblox.com/catalog/${x.assetId}" target="_blank" rel="noopener noreferrer">${esc(v)}</a>` }, { k: "restrictions", label: "Type" }, { k: "lowestResalePrice", label: "Lowest resale (R$)", num: true, fmt: (v) => num(v) }, { k: "totalQuantity", label: "Supply", num: true, fmt: (v) => num(v) }, { k: "favorites", label: "Favorites", num: true, fmt: (v) => compact(v) }, { k: "assetId", label: "", fmt: (v, x) => (x.watched ? `<a href="#/item/${v}">Open</a>` : `<button class="btn sm add" data-id="${v}">Watch</button>`) }], r.items, { name: "popular-limiteds", sort: "favorites", after: (w) => $$(".add", w).forEach((b) => (b.onclick = () => add(Number(b.dataset.id), b))) }));
+    }).catch((e) => { pop.lastElementChild.outerHTML = `<div class="empty down">${esc(e.message)}</div>`; });
     root.append(html(`<p class="muted small section">Prices are the lowest listed resale price at each sample (hourly), not completed sales. RAP and sales counts come from Roblox's public resale feed, which may lag; trade volume and liquidity are not available. No purchases or trades are ever automated.</p>`));
     return root;
   };
@@ -488,6 +511,73 @@
     root.append(grid("g1", [card("Observed lowest resale price", lineChart([{ name: "Lowest resale", points: d.snapshots.map((s) => ({ t: s.ts, v: s.lowest_resale_price })) }], { yFmt: (v) => num(v) }))]));
     root.append(grid("g1", [card(`Roblox resale history${m.resalePointsThrough ? ` (latest point ${m.resalePointsThrough})` : ""}`, lineChart([{ name: "Price point", color: "#a78bfa", points: d.resalePoints.map((p) => ({ t: Date.parse(p.day), v: p.value })) }], { yFmt: (v) => num(v), empty: "Roblox returned no resale history for this item." }))]));
     root.append(grid("g1", [alertForm("item", m.assetId, m.name)]));
+    return root;
+  };
+
+  VIEWS.creators = async () => {
+    const d = await api("creators");
+    const root = html(`<div></div>`);
+    root.append(grid("g2", [
+      card("Players by creator (top 12)", bars(d.creators.slice(0, 12).map((c) => ({ label: c.creator, value: c.playing })), num)),
+      card("Most games in the observed pool", bars([...d.creators].sort((a, b) => b.games - a.games).slice(0, 12).map((c) => ({ label: c.creator, value: c.games })), num)),
+    ]));
+    root.append(grid("g1", [card(`Creators (${d.creators.length})`, table([
+      { k: "creator", label: "Creator", fmt: (v, r) => (r.creatorId ? `<a href="#/lookup/${r.creatorType === "Group" ? "group" : "user"}:${r.creatorId}">${esc(v)}</a>` : esc(v)) },
+      { k: "creatorType", label: "Type" },
+      { k: "games", label: "Games", num: true },
+      { k: "playing", label: "Players", num: true, fmt: (v) => num(v) },
+      { k: "growth24", label: "24h", num: true, fmt: delta },
+      { k: "visits", label: "Lifetime visits", num: true, fmt: (v) => compact(v) },
+      { k: "top", label: "Top game", sort: (r) => r.top?.current, text: (r) => r.top?.name, fmt: (v) => (v ? `${gameLink(v)} <span class="muted small">${num(v.current)}</span>` : "–") },
+    ], d.creators, { name: "creators", sort: "playing" }))]));
+    root.append(html(`<p class="muted small section">Covers games in the observed pool only (games seen on Roblox's discovery charts in the last 7 days plus your lists), not a creator's whole catalogue. Click a creator to look up all of their public games.</p>`));
+    return root;
+  };
+
+  VIEWS.lookup = async (arg) => {
+    const root = html(`<div></div>`);
+    const [kind0, q0] = arg && arg.includes(":") ? [arg.slice(0, arg.indexOf(":")), arg.slice(arg.indexOf(":") + 1)] : ["user", ""];
+    const c = card("Look up a Roblox player or group", `<div class="row"><select class="in" id="lk"><option value="user">Player</option><option value="group"${kind0 === "group" ? " selected" : ""}>Group</option></select><input class="in" id="lq" maxlength="120" placeholder="Username, id, or profile/group link" value="${esc(q0)}"><button class="btn" id="lgo">Look up</button></div><div class="muted small section">Live public data from Roblox. Nothing is stored.</div>`);
+    root.append(c);
+    const out = html(`<div class="section"></div>`);
+    root.append(out);
+    const gamesTable = (games, name) => table([
+      { k: "name", label: "Game", fmt: (v, r) => `<a href="#/game/${r.universeId}" data-u="${r.universeId}" class="glink">${esc(v)}</a>` },
+      { k: "playing", label: "Players now", num: true, fmt: (v) => num(v) },
+      { k: "visits", label: "Visits", num: true, fmt: (v) => compact(v) },
+      { k: "favorites", label: "Favorites", num: true, fmt: (v) => compact(v) },
+      { k: "upVotes", label: "Like ratio", num: true, sort: (r) => (r.upVotes ? r.upVotes / Math.max(1, r.upVotes + r.downVotes) : null), fmt: (v, r) => (r.upVotes ? pctPlain(r.upVotes / Math.max(1, r.upVotes + r.downVotes), 0) : "–") },
+      { k: "updated", label: "Updated", fmt: day },
+      { k: "universeId", label: "", fmt: (v) => `<button class="btn sm trk" data-id="${v}">Track</button>` },
+    ], games, { name, sort: "playing", empty: "No public games.", after: (w) => {
+      $$(".glink", w).forEach((a) => { a.href = `#/game/${a.dataset.u}`; a.onclick = async (e) => { e.preventDefault(); try { await api("games", { method: "POST", body: { ref: `u:${a.dataset.u}` } }); } catch { /* opens if already known */ } location.hash = `#/game/${a.dataset.u}`; }; });
+      $$(".trk", w).forEach((b) => (b.onclick = async () => { b.disabled = true; try { await api("games", { method: "POST", body: { ref: `u:${b.dataset.id}` } }); b.textContent = "Tracking"; toast("Tracking. First snapshot is being collected."); } catch (e) { toast(e.message, true); b.disabled = false; } }));
+    } });
+    const run = async () => {
+      const kind = $("#lk", c).value, q = $("#lq", c).value.trim();
+      if (!q) return;
+      out.innerHTML = `<div class="loading">Looking up…</div>`;
+      try {
+        const r = (await api(`lookup/${kind}?q=${encodeURIComponent(q)}`)).result;
+        out.innerHTML = "";
+        const total = r.games.reduce((s, g) => s + (g.playing || 0), 0);
+        const visits = r.games.reduce((s, g) => s + (g.visits || 0), 0);
+        if (kind === "user") {
+          out.append(html(`<div class="card"><div class="row">${icon(r.avatar).replace('class="icon"', 'class="icon" width="56" height="56"')}<div><h3>${esc(r.displayName)} <span class="muted small">@${esc(r.name)}</span>${r.verified ? ` <span class="pill">verified</span>` : ""}${r.banned ? ` <span class="pill declining">banned</span>` : ""}</h3><div class="muted small">id ${r.id} · joined ${esc(day(r.created))} · <a href="https://www.roblox.com/users/${r.id}/profile" target="_blank" rel="noopener noreferrer">Roblox profile</a></div><div class="small">${esc(r.description.slice(0, 300))}</div></div></div></div>`));
+          out.append(grid("g6", [kpi("Friends", num(r.friends)), kpi("Followers", compact(r.followers)), kpi("Following", compact(r.following)), kpi("Public games", num(r.games.length)), kpi("Players in their games", num(total)), kpi("Visits across games", compact(visits))]));
+          out.append(grid("g1", [card("Games created", gamesTable(r.games, `user-${r.id}-games`))]));
+          out.append(grid("g1", [card(`Groups (${r.groups.length})`, table([{ k: "name", label: "Group", fmt: (v, g) => `<a href="#/lookup/group:${g.id}">${esc(v)}</a>` }, { k: "role", label: "Role" }, { k: "members", label: "Members", num: true, fmt: (v) => compact(v) }, { k: "owner", label: "Owner", fmt: (v) => (v ? "Yes" : "") }], r.groups, { name: `user-${r.id}-groups`, sort: "members", empty: "Not in any public groups." }))]));
+        } else {
+          out.append(html(`<div class="card"><div class="row">${icon(r.icon).replace('class="icon"', 'class="icon" width="56" height="56"')}<div><h3>${esc(r.name)}${r.verified ? ` <span class="pill">verified</span>` : ""}</h3><div class="muted small">group ${r.id}${r.owner ? ` · owner <a href="#/lookup/user:${r.owner.id}">@${esc(r.owner.name)}</a>` : ""} · <a href="https://www.roblox.com/communities/${r.id}" target="_blank" rel="noopener noreferrer">Roblox page</a></div><div class="small">${esc(r.description.slice(0, 300))}</div></div></div></div>`));
+          out.append(grid("g4", [kpi("Members", compact(r.members)), kpi("Public games", num(r.games.length)), kpi("Players in their games", num(total)), kpi("Visits across games", compact(visits))]));
+          out.append(grid("g1", [card("Games", gamesTable(r.games, `group-${r.id}-games`))]));
+        }
+        applyDynamic(out);
+      } catch (e) { out.innerHTML = `<div class="empty down">${esc(e.message)}</div>`; }
+    };
+    $("#lgo", c).onclick = run;
+    $("#lq", c).onkeydown = (e) => { if (e.key === "Enter") run(); };
+    if (q0) run();
     return root;
   };
 
@@ -801,13 +891,15 @@ return Stats`;
     root.append(grid("g1", [card("Recent job runs", table([{ k: "job_type", label: "Job" }, { k: "started_at", label: "Started", fmt: dt }, { k: "finished_at", label: "Took", num: true, sort: (r) => r.finished_at - r.started_at, fmt: (v, r) => (v ? `${((v - r.started_at) / 1000).toFixed(1)}s` : "running") }, { k: "ok", label: "Result", fmt: (v) => (v ? `<span class="ok">ok</span>` : v === 0 ? `<span class="bad">failed</span>` : "–") }, { k: "items", label: "Items", num: true }, { k: "error", label: "Error", fmt: (v) => `<span class="small">${esc(v || "")}</span>` }], q.runs, { name: "job-runs" }))]));
     if (q.failed.length || q.retrying.length) root.append(grid("g1", [card("Failed and retrying jobs", table([{ k: "type", label: "Job" }, { k: "attempts", label: "Attempts", num: true }, { k: "last_error", label: "Last error" }], [...q.failed, ...q.retrying], { noTools: true }))]));
     root.append(grid("g1", [card("Sessions", table([{ k: "id", label: "Session", fmt: (v) => `<span class="mono">${esc(v)}…</span>` }, { k: "created_at", label: "Signed in", fmt: dt }, { k: "last_seen_at", label: "Last active", fmt: ago }, { k: "expires_at", label: "Expires", fmt: dt }, { k: "user_agent", label: "Browser", fmt: (v) => `<span class="small muted">${esc((v || "").slice(0, 80))}</span>` }], se.sessions, { noTools: true }), `<button class="btn danger sm" id="revoke">Sign out everywhere</button>`)]));
+    const cov = st.coverage || [];
+    root.append(grid("g1", [card("Collection coverage (hours with data per day, last 14 days)", bars(cov.map((x) => ({ label: x.day.slice(5), value: x.hours })), (v) => `${v}/24h`), `<span class="muted small">${cov.length ? Math.round((cov.reduce((s, x) => s + x.hours, 0) / (cov.length * 24)) * 100) : 0}% covered</span>`)]));
     $("#revoke", root).onclick = async () => { if (confirm("Sign out all sessions, including this one?")) { await api("sessions/revoke-all", { method: "POST" }); location.href = "/stats/login"; } };
     return root;
   };
 
   // ---------- routing ----------
   const NAV = [
-    ["Analytics", [["overview", "Overview"], ["trends", "Game Trends"], ["explorer", "Game Explorer"], ["competitors", "Competitors"], ["genres", "Genre Analytics"], ["opportunities", "Opportunities"], ["collectibles", "Collectibles"]]],
+    ["Analytics", [["overview", "Overview"], ["trends", "Game Trends"], ["explorer", "Game Explorer"], ["competitors", "Competitors"], ["genres", "Genre Analytics"], ["opportunities", "Opportunities"], ["creators", "Creators"], ["collectibles", "Collectibles"], ["lookup", "Player & Group Lookup"]]],
     ["My games", [["experiences", "My Experiences"], ["economy", "Economy"], ["monetization", "Monetization"], ["retention", "Retention"]]],
     ["Research", [["reports", "AI Reports"], ["alerts", "Alerts"], ["watchlists", "Watchlists"], ["data", "Data Explorer"]]],
     ["", [["settings", "Settings"]]],
@@ -872,4 +964,9 @@ return Stats`;
   render();
   refreshBanner();
   setInterval(refreshBanner, 120_000);
+  // Keep the live pages current while the tab is open and visible.
+  setInterval(() => {
+    const name = location.hash.replace(/^#\/?/, "").split(/[/?]/)[0] || "overview";
+    if (!document.hidden && ["overview", "trends", "creators"].includes(name) && !$("input:focus, select:focus", view)) render();
+  }, 300_000);
 })();
