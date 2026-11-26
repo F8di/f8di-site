@@ -41,7 +41,7 @@ export async function computeMetrics(db, { discoveryDays = 7 } = {}) {
   );
   const pool = games.filter((g) => tracked.has(g.universe_id) || (g.last_seen_at || 0) > t - discoveryDays * DAY);
   const ids = new Set(pool.map((g) => g.universe_id));
-  const hourly = await all(db, "SELECT universe_id, hour, samples, sum_playing, peak_playing, visits, favorites, up_votes, down_votes FROM game_hourly WHERE hour >= ?", t - 76 * HOUR);
+  const hourly = await all(db, "SELECT universe_id, hour, samples, sum_playing, peak_playing, visits, favorites, up_votes, down_votes FROM game_hourly WHERE hour >= ?", t - 88 * HOUR);
   const daily = await all(db, "SELECT universe_id, day, avg_playing, peak_playing, visits, favorites FROM game_daily WHERE day >= ? ORDER BY day", dayKey(t - 31 * DAY));
   const byH = new Map();
   for (const r of hourly) if (ids.has(r.universe_id)) (byH.get(r.universe_id) || byH.set(r.universe_id, []).get(r.universe_id)).push(r);
@@ -96,6 +96,8 @@ export async function computeMetrics(db, { discoveryDays = 7 } = {}) {
     // same time of day 1-3 days earlier (within 3 hours), which avoids comparing peak hours with quiet ones.
     let growth24 = growth(avg24, avgPrev24);
     let growthBasis = growth24 !== null ? "hourly" : null;
+    // The pair growth24 was measured from, so aggregates can sum players (a drop to zero has no usable ratio).
+    let g24 = growth24 !== null ? { cur: avg24, prev: avgPrev24 } : null;
     if (growth24 === null && latest.hour > t - 12 * HOUR) {
       for (let back = 1; back <= 3 && growth24 === null; back++) {
         let best = null;
@@ -107,6 +109,7 @@ export async function computeMetrics(db, { discoveryDays = 7 } = {}) {
           const total = growth(current, best.sum_playing / best.samples);
           growth24 = Math.sign(1 + total) * Math.abs(1 + total) ** (1 / back) - 1;
           growthBasis = back === 1 ? "sample" : `sample-${back}d`;
+          if (growth24 !== null) g24 = { cur: current, prev: growth24 > -1 ? current / (1 + growth24) : best.sum_playing / best.samples };
         }
       }
     }
@@ -141,7 +144,7 @@ export async function computeMetrics(db, { discoveryDays = 7 } = {}) {
       current: Math.round(current),
       peakObserved: Math.max(...h.map((r) => r.peak_playing || 0), ...days.map((d) => d.peak_playing || 0)),
       avg6, avgPrev6, avg24, avgPrev24, avg7, avgPrev7,
-      growth6, growth24, growth7, growthBasis, growthYesterday, acceleration,
+      growth6, growth24, growth7, growthBasis, g24, growthYesterday, acceleration,
       baseline, baselineRatio, z,
       visits: latest.visits, visitsPerHour, visitGrowth: pctChange(visitsPerHour, prevVisitsPerHour),
       favorites: latest.favorites, favPerHour,
@@ -179,10 +182,15 @@ function estGrowth(ms, key) {
   let cur = 0;
   let prev = 0;
   for (const m of ms) {
-    if (!Number.isFinite(m[key]) || m[key] <= -0.99) continue;
-    const c = m.avg24 ?? m.current ?? 0;
-    cur += c;
-    prev += c / (1 + m[key]);
+    if (!Number.isFinite(m[key])) continue;
+    if (key === "growth24" && m.g24) {
+      cur += m.g24.cur;
+      prev += m.g24.prev;
+    } else if (m[key] > -1) {
+      const c = m.avg24 ?? m.current ?? 0;
+      cur += c;
+      prev += c / (1 + m[key]);
+    }
   }
   return prev > 0 ? growth(cur, prev) : null;
 }
@@ -464,10 +472,9 @@ export async function creatorLeaderboard(db) {
     c.games++;
     c.playing += m.current || 0;
     c.visits += m.visits || 0;
-    if (Number.isFinite(m.growth24)) {
-      const cur = m.avg24 ?? m.current ?? 0;
-      c.cur += cur;
-      c.prev += cur / (1 + m.growth24 || 1);
+    if (Number.isFinite(m.growth24) && m.g24) {
+      c.cur += m.g24.cur;
+      c.prev += m.g24.prev;
     }
     if (!c.top || (m.current || 0) > (c.top.current || 0)) c.top = { universeId: m.universeId, name: m.name, current: m.current, icon: m.icon };
   }
