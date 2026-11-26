@@ -109,16 +109,19 @@ export async function computeMetrics(db, { discoveryDays = 7 } = {}) {
           const total = growth(current, best.sum_playing / best.samples);
           growth24 = Math.sign(1 + total) * Math.abs(1 + total) ** (1 / back) - 1;
           growthBasis = back === 1 ? "sample" : `sample-${back}d`;
-          if (growth24 !== null) g24 = { cur: current, prev: growth24 > -1 ? current / (1 + growth24) : best.sum_playing / best.samples };
+          if (growth24 !== null) g24 = { cur: current, prev: current - growth24 * Math.max(best.sum_playing / best.samples, MIN_DENOM) };
         }
       }
     }
     const growth6 = growth(avg6, avgPrev6);
     let growth7 = growth(avg7, avgPrev7);
+    let g7 = growth7 !== null ? { cur: avg7, prev: avgPrev7 } : null;
     if (growth7 === null && dAvg.length >= 4) {
       const vals = dAvg.slice(-14);
       const half = Math.floor(vals.length / 2);
-      growth7 = growth(mean(vals.slice(-half)), mean(vals.slice(-2 * half, -half)));
+      g7 = { cur: mean(vals.slice(-half)), prev: mean(vals.slice(-2 * half, -half)) };
+      growth7 = growth(g7.cur, g7.prev);
+      if (growth7 === null) g7 = null;
     }
     const acceleration = growthYesterday !== null && growthDayBefore !== null ? growthYesterday - growthDayBefore : null;
     const hoursCovered = h.filter((r) => r.hour > t - 48 * HOUR).length;
@@ -144,7 +147,7 @@ export async function computeMetrics(db, { discoveryDays = 7 } = {}) {
       current: Math.round(current),
       peakObserved: Math.max(...h.map((r) => r.peak_playing || 0), ...days.map((d) => d.peak_playing || 0)),
       avg6, avgPrev6, avg24, avgPrev24, avg7, avgPrev7,
-      growth6, growth24, growth7, growthBasis, g24, growthYesterday, acceleration,
+      growth6, growth24, growth7, growthBasis, g24, g7, growthYesterday, acceleration,
       baseline, baselineRatio, z,
       visits: latest.visits, visitsPerHour, visitGrowth: pctChange(visitsPerHour, prevVisitsPerHour),
       favorites: latest.favorites, favPerHour,
@@ -178,21 +181,17 @@ export async function computeMetrics(db, { discoveryDays = 7 } = {}) {
 }
 
 // Player-weighted growth across games when the strict hourly/weekly windows have no data.
-function estGrowth(ms, key) {
+function estGrowth(ms, pair) {
   let cur = 0;
   let prev = 0;
+  let n = 0;
   for (const m of ms) {
-    if (!Number.isFinite(m[key])) continue;
-    if (key === "growth24" && m.g24) {
-      cur += m.g24.cur;
-      prev += m.g24.prev;
-    } else if (m[key] > -1) {
-      const c = m.avg24 ?? m.current ?? 0;
-      cur += c;
-      prev += c / (1 + m[key]);
-    }
+    if (!m[pair]) continue;
+    cur += m[pair].cur;
+    prev += m[pair].prev;
+    n++;
   }
-  return prev > 0 ? growth(cur, prev) : null;
+  return n ? growth(cur, prev) : null;
 }
 
 export function genreMetrics(list, t = now()) {
@@ -211,8 +210,8 @@ export function genreMetrics(list, t = now()) {
       genre,
       games: ms.length,
       playing: total,
-      growth24: withPrev24.length ? growth(withPrev24.reduce((s, m) => s + m.avg24, 0), withPrev24.reduce((s, m) => s + m.avgPrev24, 0)) : estGrowth(ms, "growth24"),
-      growth7: !withPrev7.length ? estGrowth(ms, "growth7") : growth(withPrev7.reduce((s, m) => s + m.avg7, 0), withPrev7.reduce((s, m) => s + m.avgPrev7, 0)),
+      growth24: withPrev24.length ? growth(withPrev24.reduce((s, m) => s + m.avg24, 0), withPrev24.reduce((s, m) => s + m.avgPrev24, 0)) : estGrowth(ms, "g24"),
+      growth7: !withPrev7.length ? estGrowth(ms, "g7") : growth(withPrev7.reduce((s, m) => s + m.avg7, 0), withPrev7.reduce((s, m) => s + m.avgPrev7, 0)),
       hhi: +hhi.toFixed(3),
       topShare: shares.length ? +Math.max(...shares).toFixed(3) : 0,
       newGameShare: total ? +(recent.reduce((s, m) => s + (m.current || 0), 0) / total).toFixed(3) : 0,
@@ -468,18 +467,19 @@ export async function creatorLeaderboard(db) {
   for (const m of ms) {
     if (!m.creator) continue;
     const key = `${m.creatorType}:${m.creator}`;
-    const c = groups.get(key) || groups.set(key, { creator: m.creator, creatorType: m.creatorType, creatorId: ids.get(m.universeId) ?? null, games: 0, playing: 0, visits: 0, prev: 0, cur: 0, top: null }).get(key);
+    const c = groups.get(key) || groups.set(key, { creator: m.creator, creatorType: m.creatorType, creatorId: ids.get(m.universeId) ?? null, games: 0, playing: 0, visits: 0, prev: 0, cur: 0, n: 0, top: null }).get(key);
     c.games++;
     c.playing += m.current || 0;
     c.visits += m.visits || 0;
     if (Number.isFinite(m.growth24) && m.g24) {
       c.cur += m.g24.cur;
       c.prev += m.g24.prev;
+      c.n++;
     }
     if (!c.top || (m.current || 0) > (c.top.current || 0)) c.top = { universeId: m.universeId, name: m.name, current: m.current, icon: m.icon };
   }
   return [...groups.values()]
-    .map(({ prev, cur, ...c }) => ({ ...c, growth24: prev > 0 ? growth(cur, prev) : null }))
+    .map(({ prev, cur, n, ...c }) => ({ ...c, growth24: n ? growth(cur, prev) : null }))
     .sort((a, b) => b.playing - a.playing);
 }
 
