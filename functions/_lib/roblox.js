@@ -258,7 +258,7 @@ async function creatorGames(kind, id) {
   return list
     .map((g) => {
       const l = live.get(g.id) || {};
-      return { universeId: g.id, name: l.name || g.name, playing: l.playing ?? null, visits: l.visits ?? g.placeVisits ?? null, favorites: l.favorites ?? null, upVotes: l.upVotes ?? null, downVotes: l.downVotes ?? null, created: g.created, updated: g.updated };
+      return { universeId: g.id, placeId: g.rootPlace?.id ?? null, name: l.name || g.name, playing: l.playing ?? null, visits: l.visits ?? g.placeVisits ?? null, favorites: l.favorites ?? null, upVotes: l.upVotes ?? null, downVotes: l.downVotes ?? null, created: g.created, updated: g.updated };
     })
     .sort((a, b) => (b.playing || 0) - (a.playing || 0) || (b.visits || 0) - (a.visits || 0));
 }

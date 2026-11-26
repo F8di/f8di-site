@@ -542,7 +542,7 @@
     const out = html(`<div class="section"></div>`);
     root.append(out);
     const gamesTable = (games, name) => table([
-      { k: "name", label: "Game", fmt: (v, r) => `<a href="#/game/${r.universeId}" data-u="${r.universeId}" class="glink">${esc(v)}</a>` },
+      { k: "name", label: "Game", fmt: (v, r) => (r.placeId ? `<a href="https://www.roblox.com/games/${r.placeId}" target="_blank" rel="noopener noreferrer">${esc(v)}</a>` : esc(v)) },
       { k: "playing", label: "Players now", num: true, fmt: (v) => num(v) },
       { k: "visits", label: "Visits", num: true, fmt: (v) => compact(v) },
       { k: "favorites", label: "Favorites", num: true, fmt: (v) => compact(v) },
@@ -550,8 +550,7 @@
       { k: "updated", label: "Updated", fmt: day },
       { k: "universeId", label: "", fmt: (v) => `<button class="btn sm trk" data-id="${v}">Track</button>` },
     ], games, { name, sort: "playing", empty: "No public games.", after: (w) => {
-      $$(".glink", w).forEach((a) => { a.href = `#/game/${a.dataset.u}`; a.onclick = async (e) => { e.preventDefault(); try { await api("games", { method: "POST", body: { ref: `u:${a.dataset.u}` } }); } catch { /* opens if already known */ } location.hash = `#/game/${a.dataset.u}`; }; });
-      $$(".trk", w).forEach((b) => (b.onclick = async () => { b.disabled = true; try { await api("games", { method: "POST", body: { ref: `u:${b.dataset.id}` } }); b.textContent = "Tracking"; toast("Tracking. First snapshot is being collected."); } catch (e) { toast(e.message, true); b.disabled = false; } }));
+      $$(".trk", w).forEach((b) => (b.onclick = async () => { b.disabled = true; try { await api("games", { method: "POST", body: { ref: `u:${b.dataset.id}` } }); b.outerHTML = `<a href="#/game/${b.dataset.id}">Open</a>`; toast("Tracking. First snapshot is being collected."); } catch (e) { toast(e.message, true); b.disabled = false; } }));
     } });
     const run = async () => {
       const kind = $("#lk", c).value, q = $("#lq", c).value.trim();
