@@ -3,6 +3,13 @@ import { DAY, HOUR, clamp, dayKey, mean, median, now, pctChange, stdev } from ".
 
 const MIN_DENOM = 20; // keeps tiny games from showing +5000% on a handful of players
 
+// The previous value for which growth(cur, prev) equals g; `fallback` when cur dropped to nothing.
+function dayAgo(cur, g, fallback) {
+  if (g <= -1) return fallback;
+  const prev = cur / (1 + g);
+  return prev >= MIN_DENOM ? prev : cur - g * MIN_DENOM;
+}
+
 export function growth(cur, prev) {
   if (!Number.isFinite(cur) || !Number.isFinite(prev)) return null;
   return (cur - prev) / Math.max(prev, MIN_DENOM);
@@ -41,7 +48,7 @@ export async function computeMetrics(db, { discoveryDays = 7 } = {}) {
   );
   const pool = games.filter((g) => tracked.has(g.universe_id) || (g.last_seen_at || 0) > t - discoveryDays * DAY);
   const ids = new Set(pool.map((g) => g.universe_id));
-  const hourly = await all(db, "SELECT universe_id, hour, samples, sum_playing, peak_playing, visits, favorites, up_votes, down_votes FROM game_hourly WHERE hour >= ?", t - 49 * HOUR);
+  const hourly = await all(db, "SELECT universe_id, hour, samples, sum_playing, peak_playing, visits, favorites, up_votes, down_votes FROM game_hourly WHERE hour >= ?", t - 88 * HOUR);
   const daily = await all(db, "SELECT universe_id, day, avg_playing, peak_playing, visits, favorites FROM game_daily WHERE day >= ? ORDER BY day", dayKey(t - 31 * DAY));
   const byH = new Map();
   for (const r of hourly) if (ids.has(r.universe_id)) (byH.get(r.universe_id) || byH.set(r.universe_id, []).get(r.universe_id)).push(r);
@@ -92,9 +99,37 @@ export async function computeMetrics(db, { discoveryDays = 7 } = {}) {
     const votes = (latest.up_votes || 0) + (latest.down_votes || 0);
     const likeRatio = votes > 0 ? latest.up_votes / votes : null;
 
-    const growth24 = growth(avg24, avgPrev24);
+    // When collection has gaps the strict hourly windows are empty. Fall back to the sample taken at the
+    // same time of day 1-3 days earlier (within 3 hours), which avoids comparing peak hours with quiet ones.
+    let growth24 = growth(avg24, avgPrev24);
+    let growthBasis = growth24 !== null ? "hourly" : null;
+    // The pair growth24 was measured from, so aggregates can sum players (a drop to zero has no usable ratio).
+    let g24 = growth24 !== null ? { cur: avg24, prev: avgPrev24 } : null;
+    if (growth24 === null && latest.hour > t - 12 * HOUR) {
+      for (let back = 1; back <= 3 && growth24 === null; back++) {
+        let best = null;
+        for (const r of h) {
+          const off = Math.abs(r.hour - (latest.hour - back * DAY));
+          if (off <= 3 * HOUR && (!best || off < Math.abs(best.hour - (latest.hour - back * DAY)))) best = r;
+        }
+        if (best) {
+          const total = growth(current, best.sum_playing / best.samples);
+          growth24 = Math.sign(1 + total) * Math.abs(1 + total) ** (1 / back) - 1;
+          growthBasis = back === 1 ? "sample" : `sample-${back}d`;
+          if (growth24 !== null) g24 = { cur: current, prev: dayAgo(current, growth24, best.sum_playing / best.samples) };
+        }
+      }
+    }
     const growth6 = growth(avg6, avgPrev6);
-    const growth7 = growth(avg7, avgPrev7);
+    let growth7 = growth(avg7, avgPrev7);
+    let g7 = growth7 !== null ? { cur: avg7, prev: avgPrev7 } : null;
+    if (growth7 === null && dAvg.length >= 4) {
+      const vals = dAvg.slice(-14);
+      const half = Math.floor(vals.length / 2);
+      g7 = { cur: mean(vals.slice(-half)), prev: mean(vals.slice(-2 * half, -half)) };
+      growth7 = growth(g7.cur, g7.prev);
+      if (growth7 === null) g7 = null;
+    }
     const acceleration = growthYesterday !== null && growthDayBefore !== null ? growthYesterday - growthDayBefore : null;
     const hoursCovered = h.filter((r) => r.hour > t - 48 * HOUR).length;
     const coverage = clamp(hoursCovered / 48, 0, 1);
@@ -119,7 +154,7 @@ export async function computeMetrics(db, { discoveryDays = 7 } = {}) {
       current: Math.round(current),
       peakObserved: Math.max(...h.map((r) => r.peak_playing || 0), ...days.map((d) => d.peak_playing || 0)),
       avg6, avgPrev6, avg24, avgPrev24, avg7, avgPrev7,
-      growth6, growth24, growth7, growthYesterday, acceleration,
+      growth6, growth24, growth7, growthBasis, g24, g7, growthYesterday, acceleration,
       baseline, baselineRatio, z,
       visits: latest.visits, visitsPerHour, visitGrowth: pctChange(visitsPerHour, prevVisitsPerHour),
       favorites: latest.favorites, favPerHour,
@@ -152,6 +187,20 @@ export async function computeMetrics(db, { discoveryDays = 7 } = {}) {
   return metrics;
 }
 
+// Player-weighted growth across games when the strict hourly/weekly windows have no data.
+function estGrowth(ms, pair) {
+  let cur = 0;
+  let prev = 0;
+  let n = 0;
+  for (const m of ms) {
+    if (!m[pair]) continue;
+    cur += m[pair].cur;
+    prev += m[pair].prev;
+    n++;
+  }
+  return n ? growth(cur, prev) : null;
+}
+
 export function genreMetrics(list, t = now()) {
   const groups = new Map();
   for (const m of list) (groups.get(m.genre) || groups.set(m.genre, []).get(m.genre)).push(m);
@@ -168,8 +217,8 @@ export function genreMetrics(list, t = now()) {
       genre,
       games: ms.length,
       playing: total,
-      growth24: withPrev24.length ? growth(withPrev24.reduce((s, m) => s + m.avg24, 0), withPrev24.reduce((s, m) => s + m.avgPrev24, 0)) : null,
-      growth7: withPrev7.length ? growth(withPrev7.reduce((s, m) => s + m.avg7, 0), withPrev7.reduce((s, m) => s + m.avgPrev7, 0)) : null,
+      growth24: withPrev24.length ? growth(withPrev24.reduce((s, m) => s + m.avg24, 0), withPrev24.reduce((s, m) => s + m.avgPrev24, 0)) : estGrowth(ms, "g24"),
+      growth7: !withPrev7.length ? estGrowth(ms, "g7") : growth(withPrev7.reduce((s, m) => s + m.avg7, 0), withPrev7.reduce((s, m) => s + m.avgPrev7, 0)),
       hhi: +hhi.toFixed(3),
       topShare: shares.length ? +Math.max(...shares).toFixed(3) : 0,
       newGameShare: total ? +(recent.reduce((s, m) => s + (m.current || 0), 0) / total).toFixed(3) : 0,
@@ -201,7 +250,7 @@ export async function leaderboards(db, { limit = 25 } = {}) {
     computedAt: Number(await getMeta(db, "metrics_computed_at")) || null,
     poolSize: ms.length,
     fastestGrowing: by(ms.filter((m) => ok(m)).map((m) => ({ ...m, score: m.growth24 ?? m.growth6 })), "score"),
-    emerging: by(ms.filter((m) => ok(m, 0.2, 10) && createdWithin(m, 180) && ((m.growth24 ?? m.growth6 ?? 0) > 0.05)), "opportunity"),
+    emerging: by(ms.filter((m) => ok(m, 0.15, 10) && createdWithin(m, 180) && ((m.growth24 ?? m.growth6 ?? 0) >= 0)), "current"),
     newReleases: by(ms.filter((m) => createdWithin(m, 30)), "current"),
     newlyDiscovered: by(ms.filter((m) => m.firstSeenAt > t - 2 * DAY), "current"),
     biggestDeclines: by(ms.filter((m) => ok(m, 0.25, 50)).map((m) => ({ ...m, score: m.growth24 ?? m.growth6 })), "score", 1),
@@ -209,6 +258,10 @@ export async function leaderboards(db, { limit = 25 } = {}) {
     unexpectedBreakouts: by(ms.filter((m) => ok(m, 0.2, 10) && ((m.z ?? 0) > 3 || (m.baselineRatio ?? 0) > 2.5)).map((m) => ({ ...m, score: m.baselineRatio ?? m.z })), "score"),
     acceleration: by(ms.filter((m) => ok(m, 0.4)), "acceleration"),
     opportunities: by(ms, "opportunity"),
+    topNow: by(ms, "current"),
+    mostVisited: by(ms.filter((m) => (m.visitsPerHour ?? 0) > 0), "visitsPerHour"),
+    mostFavorited: by(ms.filter((m) => (m.favPerHour ?? 0) > 0), "favPerHour"),
+    bestRated: by(ms.filter((m) => m.current >= 200), "likeRatio"),
     trendingGenres: [...genreData.genres].filter((g) => g.games >= 2 && Number.isFinite(g.growth24)).sort((a, b) => b.growth24 - a.growth24).slice(0, limit),
   };
 }
@@ -409,6 +462,43 @@ export async function itemMetrics(db, assetIds) {
       observations: priced.length,
       lastCollectedAt: item.last_collected_at,
     });
+  }
+  return out;
+}
+
+// Creators ranked by the players across their games in the observed pool.
+export async function creatorLeaderboard(db) {
+  const ms = await loadMetrics(db);
+  const ids = new Map((await all(db, "SELECT universe_id, creator_id FROM games WHERE creator_id IS NOT NULL")).map((r) => [r.universe_id, r.creator_id]));
+  const groups = new Map();
+  for (const m of ms) {
+    if (!m.creator) continue;
+    const key = `${m.creatorType}:${m.creator}`;
+    const c = groups.get(key) || groups.set(key, { creator: m.creator, creatorType: m.creatorType, creatorId: ids.get(m.universeId) ?? null, games: 0, playing: 0, visits: 0, prev: 0, cur: 0, n: 0, top: null }).get(key);
+    c.games++;
+    c.playing += m.current || 0;
+    c.visits += m.visits || 0;
+    if (Number.isFinite(m.growth24) && m.g24) {
+      c.cur += m.g24.cur;
+      c.prev += m.g24.prev;
+      c.n++;
+    }
+    if (!c.top || (m.current || 0) > (c.top.current || 0)) c.top = { universeId: m.universeId, name: m.name, current: m.current, icon: m.icon };
+  }
+  return [...groups.values()]
+    .map(({ prev, cur, n, ...c }) => ({ ...c, growth24: n ? growth(cur, prev) : null }))
+    .sort((a, b) => b.playing - a.playing);
+}
+
+// Hours with at least one sample per day, so gaps in collection are visible.
+export async function coverage(db, days = 14) {
+  const t = now();
+  const rows = await all(db, "SELECT date(hour / 1000, 'unixepoch') AS day, COUNT(DISTINCT hour) AS hours, COUNT(DISTINCT universe_id) AS games FROM game_hourly WHERE hour >= ? GROUP BY 1 ORDER BY 1", t - days * DAY);
+  const by = new Map(rows.map((r) => [r.day, r]));
+  const out = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const d = dayKey(t - i * DAY);
+    out.push({ day: d, hours: by.get(d)?.hours || 0, games: by.get(d)?.games || 0 });
   }
   return out;
 }

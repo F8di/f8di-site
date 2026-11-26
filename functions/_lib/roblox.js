@@ -23,17 +23,32 @@ export class RobloxError extends Error {
   }
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Roblox rate-limits bursts with HTTP 429; a short backoff clears most of them within the same job.
 async function getJson(url, init = {}) {
-  const res = await fetch(url, {
-    ...init,
-    headers: { "User-Agent": UA, Accept: "application/json", ...(init.headers || {}) },
-    signal: AbortSignal.timeout(init.timeout || 12_000),
-  });
-  if (!res.ok) {
+  const delays = init.noRetry ? [] : [1200, 3500];
+  for (let attempt = 0; ; attempt++) {
+    let res;
+    try {
+      res = await fetch(url, {
+        ...init,
+        headers: { "User-Agent": UA, Accept: "application/json", ...(init.headers || {}) },
+        signal: AbortSignal.timeout(init.timeout || 12_000),
+      });
+    } catch (e) {
+      if (attempt < delays.length) { await sleep(delays[attempt]); continue; }
+      throw new RobloxError(`${new URL(url).host}${new URL(url).pathname} -> ${e.name === "TimeoutError" ? "timed out" : e.message}`, 0);
+    }
+    if (res.ok) return res.json();
     const text = (await res.text()).slice(0, 200);
+    if ((res.status === 429 || res.status >= 500) && attempt < delays.length) {
+      const ra = Number(res.headers.get("retry-after"));
+      await sleep(Number.isFinite(ra) && ra > 0 ? Math.min(ra * 1000, 6000) : delays[attempt]);
+      continue;
+    }
     throw new RobloxError(`${new URL(url).host}${new URL(url).pathname} -> HTTP ${res.status} ${text}`, res.status);
   }
-  return res.json();
 }
 
 const uuid = () => crypto.randomUUID();
@@ -217,4 +232,86 @@ export async function fetchAssetIcons(assetIds) {
 
 export async function openCloudUniverse(apiKey, universeId) {
   return getJson(SOURCES.openCloudUniverse.replace("{universeId}", universeId), { headers: { "x-api-key": apiKey } });
+}
+
+// ---------- lookups (live, nothing stored) ----------
+
+const settle = async (p, fallback) => { try { return await p; } catch { return fallback; } };
+
+export async function fetchGamePasses(universeId) {
+  const r = await getJson(`https://apis.roblox.com/game-passes/v1/universes/${universeId}/game-passes?passView=Full&pageSize=100`, { noRetry: true });
+  return (r.gamePasses || []).map((p) => ({ id: p.id, name: p.name, price: p.price ?? null, forSale: !!p.isForSale })).sort((a, b) => (b.price || 0) - (a.price || 0));
+}
+
+export async function fetchBadges(universeId) {
+  const r = await getJson(`https://badges.roblox.com/v1/universes/${universeId}/badges?limit=100&sortOrder=Asc`, { noRetry: true });
+  return (r.data || []).map((b) => ({ id: b.id, name: b.name, enabled: !!b.enabled, awarded: b.statistics?.awardedCount ?? null, awardedYesterday: b.statistics?.pastDayAwardedCount ?? null, winRate: b.statistics?.winRatePercentage ?? null, created: b.created }));
+}
+
+async function creatorGames(kind, id) {
+  const url = kind === "group"
+    ? `https://games.roblox.com/v2/groups/${id}/gamesV2?limit=50&sortOrder=Desc&accessFilter=2`
+    : `https://games.roblox.com/v2/users/${id}/games?limit=50&sortOrder=Desc&accessFilter=Public`;
+  const list = (await settle(getJson(url, { noRetry: true }), { data: [] })).data || [];
+  const ids = list.map((g) => g.id).filter(Boolean);
+  const live = ids.length ? await settle(fetchGames(ids), new Map()) : new Map();
+  return list
+    .map((g) => {
+      const l = live.get(g.id) || {};
+      return { universeId: g.id, placeId: g.rootPlace?.id ?? null, name: l.name || g.name, playing: l.playing ?? null, visits: l.visits ?? g.placeVisits ?? null, favorites: l.favorites ?? null, upVotes: l.upVotes ?? null, downVotes: l.downVotes ?? null, created: g.created, updated: g.updated };
+    })
+    .sort((a, b) => (b.playing || 0) - (a.playing || 0) || (b.visits || 0) - (a.visits || 0));
+}
+
+export async function lookupUser(query) {
+  let id = /^\d+$/.test(query) ? Number(query) : null;
+  if (!id) {
+    const m = /roblox\.com\/users\/(\d+)/.exec(query);
+    if (m) id = Number(m[1]);
+  }
+  if (!id) {
+    const r = await getJson("https://users.roblox.com/v1/usernames/users", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ usernames: [query.replace(/^@/, "")], excludeBannedUsers: false }) });
+    id = r.data?.[0]?.id || null;
+  }
+  if (!id) return null;
+  const user = await settle(getJson(`https://users.roblox.com/v1/users/${id}`), null);
+  if (!user) return null;
+  const [friends, followers, following, groups, avatar, games] = await Promise.all([
+    settle(getJson(`https://friends.roblox.com/v1/users/${id}/friends/count`, { noRetry: true }), {}),
+    settle(getJson(`https://friends.roblox.com/v1/users/${id}/followers/count`, { noRetry: true }), {}),
+    settle(getJson(`https://friends.roblox.com/v1/users/${id}/followings/count`, { noRetry: true }), {}),
+    settle(getJson(`https://groups.roblox.com/v1/users/${id}/groups/roles`, { noRetry: true }), { data: [] }),
+    settle(getJson(`https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=${id}&size=150x150&format=Png`, { noRetry: true }), { data: [] }),
+    creatorGames("user", id),
+  ]);
+  return {
+    id, name: user.name, displayName: user.displayName, description: user.description || "", created: user.created, banned: !!user.isBanned, verified: !!user.hasVerifiedBadge,
+    avatar: avatar.data?.[0]?.imageUrl || null,
+    friends: friends.count ?? null, followers: followers.count ?? null, following: following.count ?? null,
+    groups: (groups.data || []).map((g) => ({ id: g.group.id, name: g.group.name, members: g.group.memberCount, role: g.role?.name, rank: g.role?.rank, owner: g.group.owner?.userId === id })).sort((a, b) => (b.rank || 0) - (a.rank || 0) || (b.members || 0) - (a.members || 0)),
+    games,
+  };
+}
+
+export async function lookupGroup(query) {
+  const m = /^\d+$/.test(query) ? [null, query] : /roblox\.com\/(?:groups|communities)\/(\d+)/.exec(query);
+  let id = m ? Number(m[1]) : null;
+  if (!id) {
+    const r = await settle(getJson(`https://groups.roblox.com/v1/groups/search/lookup?groupName=${encodeURIComponent(query)}`, { noRetry: true }), { data: [] });
+    id = r.data?.[0]?.id || null;
+  }
+  if (!id) return null;
+  const g = await settle(getJson(`https://groups.roblox.com/v1/groups/${id}`), null);
+  if (!g) return null;
+  const [icon, games] = await Promise.all([
+    settle(getJson(`https://thumbnails.roblox.com/v1/groups/icons?groupIds=${id}&size=150x150&format=Png`, { noRetry: true }), { data: [] }),
+    creatorGames("group", id),
+  ]);
+  return { id, name: g.name, description: g.description || "", members: g.memberCount ?? null, verified: !!g.hasVerifiedBadge, owner: g.owner ? { id: g.owner.userId, name: g.owner.username } : null, icon: icon.data?.[0]?.imageUrl || null, games };
+}
+
+// Most-favorited limited items on the catalog right now.
+export async function popularCollectibles() {
+  const data = await getJson(`${SOURCES.catalogSearch}?Limit=30&SalesTypeFilter=2&SortType=1&SortAggregation=5&Category=11&Subcategory=19`);
+  return (data.data || []).filter((d) => d.itemType === "Asset").map(mapCatalogItem);
 }

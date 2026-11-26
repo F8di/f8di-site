@@ -1,0 +1,12 @@
+name = "f8di-stats-cron"
+main = "worker.js"
+compatibility_date = "2024-09-23"
+workers_dev = false
+
+[triggers]
+crons = ["*/10 * * * *"]
+
+[vars]
+STATS_SITE_URL = "https://f8di.com"
+
+# Secret (set once): npx wrangler secret put STATS_CRON_TOKEN
