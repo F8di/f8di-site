@@ -3,6 +3,13 @@ import { DAY, HOUR, clamp, dayKey, mean, median, now, pctChange, stdev } from ".
 
 const MIN_DENOM = 20; // keeps tiny games from showing +5000% on a handful of players
 
+// The previous value for which growth(cur, prev) equals g; `fallback` when cur dropped to nothing.
+function dayAgo(cur, g, fallback) {
+  if (g <= -1) return fallback;
+  const prev = cur / (1 + g);
+  return prev >= MIN_DENOM ? prev : cur - g * MIN_DENOM;
+}
+
 export function growth(cur, prev) {
   if (!Number.isFinite(cur) || !Number.isFinite(prev)) return null;
   return (cur - prev) / Math.max(prev, MIN_DENOM);
@@ -109,7 +116,7 @@ export async function computeMetrics(db, { discoveryDays = 7 } = {}) {
           const total = growth(current, best.sum_playing / best.samples);
           growth24 = Math.sign(1 + total) * Math.abs(1 + total) ** (1 / back) - 1;
           growthBasis = back === 1 ? "sample" : `sample-${back}d`;
-          if (growth24 !== null) g24 = { cur: current, prev: current - growth24 * Math.max(best.sum_playing / best.samples, MIN_DENOM) };
+          if (growth24 !== null) g24 = { cur: current, prev: dayAgo(current, growth24, best.sum_playing / best.samples) };
         }
       }
     }
